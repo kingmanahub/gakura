@@ -20,6 +20,7 @@ local AnimationsLoggedOrder = {}
 
 local ESPUtility = ImportESP or ESP_Utility
 local AnimationTrackerModule = ImportAnimationTracker or AnimationTracker
+
 if not UI_Library or not ESPUtility or not AnimationTrackerModule then
     error("[AutoParry] A required dependency failed to initialize")
 end
@@ -30,22 +31,18 @@ if Environment.__GAKURAN_AUTO_PARRY_CLEANUP then
 end
 
 local RuntimeConnections = {}
-local function TrackConnection(connection)
-    if connection then
-        table.insert(RuntimeConnections, connection)
+
+local function TrackConnection(runtimeConnection)
+    if runtimeConnection then
+        table.insert(RuntimeConnections, runtimeConnection)
     end
-    return connection
+    return runtimeConnection
 end
 
 local Traceback = (debug and debug.traceback) or function(err)
     return tostring(err)
 end
 
--- Forward declarations used by configuration callbacks and UI callbacks.
-local BlockStart
-local BlockEnd
-local Dodge
-local OnInputF
 local ToggleDamageLogger
 
 
@@ -321,14 +318,9 @@ local GameConfig = {
 local IgnoreIds = {
 73766443218740,111699625251889,85823794654077,83600639547203,99661732639863,106268941365574,109816855387997,122561749929324,129805948180599,
 90752347516770,135133599113049,132695091086148,137015026151472,114511731321756,122541287927198,80309578200579,100794890036133,109303037515668,117293898907979,74690341409113,73090768467054,72284079162560,92787945841620,89016181362524,
-76945839486275,101161965631044,80135556847061,128307941333158,85931837451298,91352556581859,104407197874289,77911299793653,129335968179665,122384188141033,
+76945839486275,101161965631044,80135556847061,128307941333158,85931837451298,91352556581859, 104407197874289,77911299793653,129335968179665, 122384188141033,
 132695766056641,113331696487725,124220338099067,99799500309776,108636808436488,90015977935891,87932588807124,132477488202815,102982320608759,109278619250401,79971841883936,97783129267001,72822821848529,79974955602012,77798715679680,85845666927963,108862846290180,108045962864902,93184693099565,120399899079666,99958962160522,
 }
-
-local IgnoreIdSet = {}
-for _, id in ipairs(IgnoreIds) do
-    IgnoreIdSet[id] = true
-end
 
 
 local ParriedAnimation = {"rbxassetid://100773926241456", "rbxassetid://102823909334302", "rbxassetid://96304721384743", "rbxassetid://82979105739696", "rbxassetid://96600699015093",
@@ -354,22 +346,20 @@ local BlockHoldTime = 0.4
 local FlattenedConfig = {}
 
 for styleName, assets in pairs(GameConfig) do
+
     for assetId, data in pairs(assets) do
-        if assetId == "M1Time" then
-            continue
-        end
-
-        local flatData = table.clone(data)
+        if assetId == "M1Time" then continue end
+        if assets["M1Time"] then end 
+        local flatData = table.clone(data) or {}  
         flatData.Style = styleName
-
-        if data.DisplayName ~= "M2" and assets.M1Time then
-            flatData.ReactionTime = assets.M1Time
-        elseif data.ReactionTime then
+        if data.DisplayName ~= "M2" and assets["M1Time"] then  
+            flatData.ReactionTime = assets["M1Time"]
+        elseif not data.ReactionTime then 
+            flatData.DefaultReactionTime = DefaultReactionTime
+        else 
             flatData.ReactionTime = data.ReactionTime
-        elseif data.ParryTime then
-            flatData.ReactionTime = data.ParryTime
         end
-
+        
         FlattenedConfig[assetId] = flatData
     end
 end
@@ -379,64 +369,35 @@ GameConfig = FlattenedConfig
 local AnimationIdSliders = {}
 
 local function GetAllFoldersInWorkspace()
-    local folders = {}
+    local Folders = {}
 
-    for _, folder in ipairs(game.Workspace:GetChildren()) do
-        if folder:IsA("Folder") then
-            table.insert(folders, folder.Name)
+    for _, Folder in game.Workspace:GetChildren() do  
+        if Folder.ClassName == "Folder" then
+            table.insert(Folders, Folder.Name)
         end
     end
 
-    table.sort(folders)
-    return folders
-end
-
-local function IsLocalCharacter(character)
-    if not character then
-        return false
-    end
-
-    -- Standard Roblox ownership check.
-    local owner = Players:GetPlayerFromCharacter(character)
-    if owner == LocalPlayer then
-        return true
-    end
-
-    local localCharacter = LocalPlayer.Character
-    if not localCharacter then
-        return false
-    end
-
-    if character == localCharacter then
-        return true
-    end
-
-    -- Some executor environments expose Instance.Address. Use it as a final
-    -- identity check in case the tracker returns a wrapper/reference.
-    local ok, sameAddress = pcall(function()
-        return character.Address == localCharacter.Address
-    end)
-
-    return ok and sameAddress == true
+    return Folders
 end
 
 local function GetAllCharactersInFolder()
-    local folder = SelectedFolder and game.Workspace:FindFirstChild(SelectedFolder)
-    if not folder then
-        return {}
-    end
+    if not SelectedFolder or not game.Workspace:FindFirstChild(SelectedFolder) then UI_Library:Notify("ERROR", "Select a folder first") return end 
+    
 
-    local characters = {}
+    local Characters = {}
+    local SelectedFolder = game.Workspace[SelectedFolder]
 
-    for _, character in ipairs(folder:GetChildren()) do
-        if character:IsA("Model")
-            and character:FindFirstChildWhichIsA("Humanoid")
-            and not IsLocalCharacter(character) then
-            table.insert(characters, character)
+
+    for _, Character in SelectedFolder:GetChildren() do  
+        if Character.ClassName == "Model" and Character:FindFirstChildWhichIsA("Humanoid") then
+            if not IncludeLocalCharacter then 
+                if Character.Address == game.Players.LocalPlayer.Character.Address then continue end 
+            end
+            table.insert(Characters, Character)
         end
     end
 
-    return characters
+    return Characters
 end
 
 local function SetClipboardLoggedCache()
@@ -463,30 +424,28 @@ local function SetClipboardLoggedCache()
 end
 
 local function SetClipboardIgnoreList()
-    if #AnimationsLoggedOrder == 0 then
+    local totalItems = #AnimationsLoggedOrder
+    if totalItems == 0 then
         print("[Clipboard] Nothing logged to copy.")
         return
     end
-
+    
     local newlyAddedIds = {}
 
-    for animationId in pairs(AnimationsLoggedCache) do
-        local numericId = tonumber(tostring(animationId):match("%d+"))
-        if numericId and not IgnoreIdSet[numericId] then
-            IgnoreIdSet[numericId] = true
+    for AnimationId, AnimData in pairs(AnimationsLoggedCache) do  
+        local numericId = tonumber(string.match(tostring(AnimationId), "%d+"))
+        
+        if numericId then
             table.insert(IgnoreIds, numericId)
+            
             table.insert(newlyAddedIds, tostring(numericId))
         end
     end
 
-    local outputString = table.concat(newlyAddedIds, ", ")
-    setclipboard(outputString)
+    local outputstring = table.concat(newlyAddedIds, ", ")
+    setclipboard(outputstring)    
 
-    print(string.format(
-        "[Clipboard] Copied %d new IDs. Total ignored: %d",
-        #newlyAddedIds,
-        #IgnoreIds
-    ))
+    print(string.format("[Clipboard] Copied %d NEW IDs! (Total historical ignored count is now: %d)", #newlyAddedIds, #IgnoreIds))
 end
 
 local function AnimationGrabber(Folder)
@@ -537,11 +496,12 @@ local function LiteGrabber(Folder)
 end
 --LiteGrabber(game.ReplicatedStorage.Assets.Anims.Weapon.Spear)
 
-local function UpdateSliders()
-    for animationId, info in pairs(GameConfig) do
-        local slider = AnimationIdSliders[animationId]
-        if slider then
-            slider:Set(info.ReactionTime or DefaultReactionTime)
+local function UpdateSliders(OldReactionTime)
+    for animationId, Info in (GameConfig) do 
+        if AnimationIdSliders[animationId] then
+            Info.DefaultReactionTime = DefaultReactionTime
+            local ReactionTime = Info.M1Time or Info.ReactionTime or Info.DefaultReactionTime
+            AnimationIdSliders[animationId]:Set(ReactionTime)            
         end
     end
 end
@@ -562,6 +522,7 @@ function scheduler.update()
         local task = pendingTasks[i]
         if now >= task.executeAt then
             table.remove(pendingTasks, i)
+
             task.spawn(function()
                 local ok, callbackError = xpcall(task.callback, Traceback)
                 if not ok then
@@ -601,7 +562,7 @@ local AutoDodgeToggle = AP_Section:Toggle("Auto Dodge", true)
 local ParryDebugToggle = Config_Section:Toggle("Debug Parry", false)
 
 local AutoTargetNearest = AP_Section:Toggle("Auto Target Nearest", false)
-local MultiTarget = AP_Section:Toggle("Multiple Targets", true)
+local MuliTarget = AP_Section:Toggle("Multiple Targets", true)
 
 local TargetFacingYou = nil
 local YouFacingTarget = nil
@@ -609,25 +570,30 @@ local YouFacingTarget = nil
 local LoggedText = ClipboardSection:Label("Logged Ids: ?")
 local IgnoredText = ClipboardSection:Label("Ignored Ids: ?")
 
-local function UpdateTargetPoolSection()
-    local characters = GetAllCharactersInFolder()
+local function UpdateTargetPoolSection(Tab)
+    local characters = GetAllCharactersInFolder() 
     local names = {}
-
+    
     for i, character in ipairs(characters) do
         table.insert(names, character.Name)
-        if i == 10 then
-            table.insert(names, "... (too long)")
-            break
-        end
+
+        if i == 10 then table.insert(names, "... (too long)") break end 
     end
 
-    local poolString = #names > 0 and table.concat(names, ", ") or "None"
-    TargetPool_Text:SetText("Target Pool: " .. poolString)
+    local poolString = table.concat(names, ", ")
+    TargetPool_Text:SetText("Target Pool: ".. poolString)
 end
 
 local function UpdateClipboardSection()
-    LoggedText:SetText("Logged Ids: " .. #AnimationsLoggedOrder)
-    IgnoredText:SetText("Ignored Ids: " .. #IgnoreIds)
+    local IgnoredIdsCount = #IgnoreIds
+    local AnimationsLoggedCount = 0 
+
+    for i, v in AnimationsLoggedCache do  
+        AnimationsLoggedCount += 1
+    end
+
+    LoggedText:SetText("Logged Ids: ".. AnimationsLoggedCount)
+    IgnoredText:SetText("Ignored Ids: ".. #IgnoreIds)
 end
 
 local function CreateFoldersSection()
@@ -639,10 +605,15 @@ local function CreateFoldersSection()
     Range:Set(MaxCycleRange)
 
 
+    local IncludeLocalCharacterToggle = Folders_Section:Toggle("Include Local Character", false, function(on)
+        IncludeLocalCharacter = on
+        UpdateTargetPoolSection()   
+    end)
+
     local FolderCombo = Folders_Section:Dropdown("Live Folder", nil, folders, false, function(list)
         local Selected = list[1]
         SelectedFolder = Selected
-        UpdateTargetPoolSection()
+        UpdateTargetPoolSection(Tab)
     end)
 
     if game.Workspace:FindFirstChild("Players") then  
@@ -738,78 +709,70 @@ local function CreateAPSection()
 end
 
 local function CreateClipboardSection()
+    -- 1. Define the UI element configurations in a clean list
     local elements = {
         {
             Type = "Toggle",
             Name = "Damage Logs",
             Default = false,
-            Momentary = false,
             Callback = function(on)
                 ToggleDamageLogger(on)
-            end,
+            end
         },
         {
             Type = "Toggle",
             Name = "Add unknowns to ignore and copy ignore list",
             Default = false,
-            Momentary = true,
-            Keybind = "v",
-            Callback = function()
+            Keybind = "v", -- Just define the keybind right here!
+            Callback = function(on, self) 
                 SetClipboardIgnoreList()
                 AnimationsLoggedCache = {}
                 AnimationsLoggedOrder = {}
                 UpdateClipboardSection()
-            end,
+            end
         },
         {
             Type = "Toggle",
             Name = "Copy to clipboard",
-            Default = false,
-            Momentary = true,
             Keybind = "c",
-            Callback = SetClipboardLoggedCache,
+            Callback = function()
+                SetClipboardLoggedCache()
+            end
         },
         {
             Type = "Toggle",
             Name = "Clear animation cache",
-            Default = false,
-            Momentary = true,
             Keybind = "k",
             Callback = function()
                 AnimationsLoggedCache = {}
                 AnimationsLoggedOrder = {}
                 UpdateClipboardSection()
-            end,
-        },
+            end
+        }
     }
 
+    -- 2. Loop through the list and dynamically construct the UI
     for _, config in ipairs(elements) do
         local instance
 
-        if game.PlaceId == 128736949265057 and config.Momentary then
-            instance = ClipboardSection:Button(config.Name, config.Callback)
-            continue
+        if game.PlaceId == 128736949265057 then 
+            config.Type = "Button"
         end
 
-        instance = ClipboardSection:Toggle(config.Name, config.Default, function(on)
-            if config.Momentary then
-                if not on then
-                    return
+        if config.Type == "Toggle" then
+            instance = ClipboardSection:Toggle(config.Name, config.Default, function(on)
+                if on then  
+                    config.Callback(on, instance)                    
                 end
+                instance:Set(false) 
+            end)
 
-                config.Callback()
-                task.defer(function()
-                    if instance then
-                        instance:Set(false)
-                    end
-                end)
-            else
-                config.Callback(on)
+            if config.Keybind then
+                instance:AddKeybind(config.Keybind, "Toggle")
             end
-        end)
 
-        if config.Keybind then
-            instance:AddKeybind(config.Keybind, "Toggle")
+        elseif config.Type == "Button" then
+            instance = ClipboardSection:Button(config.Name, config.Callback)
         end
     end
 end
@@ -843,11 +806,11 @@ local ORB_TRIGGER_COOLDOWN = 0.10
 local lastOrbParryAt = 0
 
 local function GetLocalHRP()
-    local character = LocalPlayer.Character
-    return character and character:FindFirstChild("HumanoidRootPart") or nil
+    local localCharacter = LocalPlayer.Character
+    return localCharacter and localCharacter:FindFirstChild("HumanoidRootPart") or nil
 end
 
-local function checkRange(studs, origin)
+function checkRange(studs, origin)
     local localRoot = GetLocalHRP()
     return localRoot ~= nil
         and origin ~= nil
@@ -877,6 +840,7 @@ local function ListenForOrbs()
             if (orb.Name == "ArdourBall2" or orb.Name == "ArdourBall")
                 and orb:IsA("BasePart")
                 and orb.Parent
+                and orb:IsDescendantOf(thrownFolder)
                 and (localRoot.Position - orb.Position).Magnitude <= PARRY_DISTANCE then
 
                 if BlockStart(now, 0.10) then
@@ -902,17 +866,19 @@ local MIN_INPUT_INTERVAL = 0.04
 
 local Stunned = false
 
-local TargetAnimationTracker = AnimationTrackerModule.new(IgnoreIds)
-local LocalAnimationTracker = AnimationTrackerModule.new(IgnoreIds)
+local AnimationTracker = AnimationTrackerModule.new(IgnoreIds)
+local LocalTracker = AnimationTrackerModule.new(IgnoreIds)
 
-local damageLoggerConnection = nil
+local IncludeLocalCharacter = false
+
+local connection = nil
 local previousHealth = 100
 local lastCharacter = nil
 
 local TargetCharacters = {}
-local EspTrackers = {}
+local EspTrackers = {} 
 
-local CurrentIndex = 0
+local CurrentIndex = 1
 local COLOR_WHITE = Color3.fromRGB(255, 255, 255)
 local COLOR_RED = Color3.fromRGB(255, 50, 50)
 local COLOR_GREEN = Color3.fromRGB(50, 255, 50)
@@ -921,16 +887,22 @@ local AnimationRegistry = {}
 local LastPendingRegData = nil
 local InputRegisteredTime = nil
 local ParryRegisteredTime = nil
-local InputLatency = 0
+local InputLatency = 0 -- (Parry - Input)
+
+local OnInputF
+
 
 local ParryState = {
     IDLE = "idle",
-    INPUT_PENDING = "input_pending",
-    PARRYING = "parrying",
-    PARRYINGFAILED = "parrying_failed",
+
+    INPUT_PENDING = "input_pending",   -- F was pressed locally, waiting for animation to appear
+    PARRYING = "parrying",             -- Animation just appeared
+    PARRYINGFAILED = "parryingfailed",       -- Animation didn't appear (Happens when you're on parry cooldown)
+
     STUNNED = "stunned",
-    WINDOW_EXCEEDED = "window_exceeded",
-    SUCCESS = "parry_success",
+    WINDOW_EXCEEDED = "window_exceeded", -- If you exceed the window cuz ur not targeting or ur
+
+    SUCCESS = "parrysuccess"       -- Parrying animation was detected so its parrying right now
 }
 
 local CurrentParryState = ParryState.IDLE
@@ -940,20 +912,21 @@ local CurrentParryState = ParryState.IDLE
 
 ToggleDamageLogger = function(state)
     if not state then
-        if damageLoggerConnection then
-            damageLoggerConnection:Disconnect()
-            damageLoggerConnection = nil
+        if connection then
+            connection:Disconnect()
+            connection = nil
         end
-        print("[Logger] Damage logger disabled")
+        print("[Logger] Heartbeat damage logger DISABLED.")
         return
     end
 
-    if damageLoggerConnection then
+    if connection then
         return
     end
 
-    print("[Logger] Damage logger active")
-    damageLoggerConnection = TrackConnection(RunService.Heartbeat:Connect(function()
+    print("[Logger] Heartbeat damage logger ACTIVE.")
+
+    connection = TrackConnection(RunService.Heartbeat:Connect(function()
         local character = LocalPlayer.Character
         local humanoid = character and character:FindFirstChildOfClass("Humanoid")
         if not humanoid then
@@ -971,12 +944,14 @@ ToggleDamageLogger = function(state)
             local damageTaken = previousHealth - currentHealth
 
             for _, targetCharacter in ipairs(TargetCharacters) do
-                local activeAnimations = TargetAnimationTracker:Update(targetCharacter) or {}
+                local activeAnimations = AnimationTracker:Update(targetCharacter) or {}
+
                 for _, anim in ipairs(activeAnimations) do
                     local timePosition = anim.TimePosition or 0
                     if anim.AnimationId and timePosition >= 0.1 and timePosition <= 0.7 then
                         local assetId = tostring(anim.AnimationId)
                         local poolData = GameConfig[assetId]
+
                         warn(string.format(
                             "[HIT] %.1f DMG | Anim: %s (%s) %s | Frame Time: %.3f",
                             damageTaken,
@@ -1015,11 +990,11 @@ end
 local function ResetParryState()
     KeyHeld = false
     ReleaseDeadline = 0
-    InputRegisteredTime = nil
     BlockEnd()
+    InputRegisteredTime = nil
 end
 
-Dodge = function()
+function Dodge()
     BlockEnd()
 
     task.spawn(function()
@@ -1029,7 +1004,7 @@ Dodge = function()
     end)
 end
 
-BlockStart = function(startTime, holdFor)
+function BlockStart(startTime, holdFor)
     local now = os.clock()
     startTime = startTime or now
 
@@ -1061,7 +1036,7 @@ BlockStart = function(startTime, holdFor)
     return true
 end
 
-BlockEnd = function()
+function BlockEnd()
     KeyHeld = false
     keyrelease(ParryKey)
 end
@@ -1088,10 +1063,11 @@ OnInputF = function(inputTime)
     return true
 end
 
+
 local function DebugParry()
 -- 1. Network Variables (These never rely on the parry window data, so we always calculate them)
-    local WeActuallyBlockedAt = ParryRegisteredTime or os.clock()
-    local WeWantedToBlockAt = InputRegisteredTime or WeActuallyBlockedAt
+    local WeActuallyBlockedAt = ParryRegisteredTime
+    local WeWantedToBlockAt = InputRegisteredTime
     local TimeTheServerReceived = InputLatency / 2
 
     if LastPendingRegData then
@@ -1155,9 +1131,9 @@ end
 
 -- Parrying animation detected
 local function OnParryingAnimationSuccess()
-    if CurrentParryState == ParryState.INPUT_PENDING then
+    if CurrentParryState == ParryState.INPUT_PENDING and InputRegisteredTime then
         ParryRegisteredTime = os.clock()
-        InputLatency = os.clock() - InputRegisteredTime
+        InputLatency = ParryRegisteredTime - InputRegisteredTime
 
         if ParryDebugToggle:Get() then  
             DebugParry()
@@ -1264,7 +1240,7 @@ local function ParryTask()
         local timeSinceInput = InputRegisteredTime and (now - InputRegisteredTime) or math.huge
         local activeAnims = GetActiveAnimationsForCharacterAsDictionary(
             LocalPlayer.Character,
-            LocalAnimationTracker
+            LocalTracker
         )
 
         if activeAnims[ParryingAnimation[1]] then
@@ -1321,7 +1297,7 @@ local function onLocalAnimationAdded(anim)
     end
 end
 
-local AnimationAdded = TrackConnection(LocalAnimationTracker.AnimationAdded:Connect(onLocalAnimationAdded))
+local AnimationAdded = TrackConnection(LocalTracker.AnimationAdded:Connect(onLocalAnimationAdded))
 
 local function LogAnimation(assetId, trackInfo)
     if not AnimationsLoggedCache[assetId] then
@@ -1337,7 +1313,7 @@ function GetActiveAnimationsForCharacterAsDictionary(character, tracker)
         return returnTable
     end
 
-    tracker = tracker or TargetAnimationTracker
+    tracker = tracker or AnimationTracker
     local activeAnimations = tracker:Update(character) or {}
 
     for _, anim in ipairs(activeAnimations) do
@@ -1373,11 +1349,11 @@ local function CheckCharacterDistance(localRoot, targetRoot)
 end
 
 local function UpdateCharacterESP(character, Distance)
-    if not AutoParryToggle.Get() then
-        if EspTrackers[character] and EspTrackers[character].ChangeText then
-            EspTrackers[character]:ChangeText("Name", "AUTO PARRY IS DISARMED", COLOR_RED)
+    if not AutoParryToggle.Get() then 
+        if EspTrackers[character] and EspTrackers[character].ChangeText then  
+            EspTrackers[character]:ChangeText("Name", "AUTO PARRY IS DISARMED", COLOR_RED)  
         end
-        return false
+        return true
     elseif Distance > AutoParryRange then
         if EspTrackers[character] and EspTrackers[character].ChangeText then  
             EspTrackers[character]:ChangeText("Name", character.Name.. " | OUT OF RANGE", COLOR_RED)  
@@ -1415,7 +1391,7 @@ local function UpdateAnimationRegistry(animKey, anim, now, currentTrackTime, att
             StartTime = adjustedNow,
             Processed = false,
             Attempted = false,
-            CurrentClockTime = now,
+            CurrentClockTime = os.clock(),
             CurrentTrackTime = currentTrackTime,
             ReactionTime = attackConfig,
             Ignore = false,
@@ -1444,18 +1420,17 @@ local function UpdateAnimationRegistry(animKey, anim, now, currentTrackTime, att
     regData.CurrentClockTime = os.clock()
     regData.CurrentTrackTime = currentTrackTime
 
+    if LastPendingRegData == regData then
+        LastPendingRegData = regData
+    end
+
     return regData
 end
 
 local function CheckAnimationDirection(character, localCharacter, localRoot, targetRoot, attackConfig)
-    if character == localCharacter then return true end
+    if character.Address == localCharacter.Address then return true end
     
-    local offset = targetRoot.Position - localRoot.Position
-    if offset.Magnitude <= 0.001 then
-        return true
-    end
-
-    local direction = offset.Unit
+    local direction = (targetRoot.Position - localRoot.Position).Unit
     local isHeavy = attackConfig.DisplayName == "M2" or attackConfig.DisplayName == "Heavy" or attackConfig.Heavy
     
     if not isHeavy then  
@@ -1517,55 +1492,44 @@ local function ExecuteParry(regData, attackConfig)
 end
 
 local function EvaluateAnimation(anim, character, localCharacter, localRoot, targetRoot, currentActiveIds)
-    if not anim.AnimationId then
-        return
-    end
-
+    -- ANIMATION VALIDATION
+    if not anim.AnimationId then return end
     local attackConfig = GameConfig[tostring(anim.AnimationId)]
-    if not attackConfig then
-        return
-    end
-
+    if not attackConfig then return end
+    
     local animKey = anim.Address or anim
     currentActiveIds[animKey] = true
-
+    
+    -- ANIMATION REGISTRY & STATE
     local now = os.clock()
-    local regData = UpdateAnimationRegistry(
-        animKey,
-        anim,
-        now,
-        anim.TimePosition or 0,
-        attackConfig
-    )
-
-    if regData.Processed then
+    local regData = UpdateAnimationRegistry(animKey, anim, now, anim.TimePosition or 0, attackConfig)
+    if regData.Processed then return end
+    
+    -- PARRY FUNCTION OVERRIDE
+    if attackConfig.ParryFunction and (now - regData.StartTime) <= (attackConfig.ReactionTime or DefaultReactionTime) + ParryWindow/2 then
+        attackConfig.ParryFunction({
+            RegistryData = regData,
+            Mob = character,
+            AnimationData = anim,
+            AnimationTracker = AnimationTracker,
+        })
         return
     end
-
-    if not CheckAnimationDirection(character, localCharacter, localRoot, targetRoot, attackConfig) then
-        return
-    end
-
+    
+    -- DIRECTION CHECKS
+    if not CheckAnimationDirection(character, localCharacter, localRoot, targetRoot, attackConfig) then return end
+    
     if regData.RandomNum > ProbabilityToParry then
         regData.Processed = true
+--        print("Skip b/c PTP", RandomNum, ProbabilityToParry)
         return
     end
-
-    if attackConfig.ParryFunction then
-        local reactionTime = attackConfig.ReactionTime or DefaultReactionTime
-        if now - regData.StartTime <= reactionTime + (ParryWindow / 2) then
-            attackConfig.ParryFunction({
-                RegistryData = regData,
-                Mob = character,
-                AnimationData = anim,
-                AnimationTracker = TargetAnimationTracker,
-            })
-        end
-        return
-    end
-
+    
+    -- PARRY EXECUTION
     if now >= regData.BlockStart and now <= regData.BlockExpire then
-        ExecuteParry(regData, attackConfig)
+    --    if not LastPendingRegData or LastPendingRegData.Proc then
+            ExecuteParry(regData, attackConfig)
+    --    end
     end
 end
 
@@ -1579,7 +1543,7 @@ local function EvaluateCharacter(character, localCharacter, localRoot, currentAc
     if not UpdateCharacterESP(character, Distance) then return end
     
     -- ANIMATION LOOP
-    local activeAnimations = TargetAnimationTracker:Update(character)
+    local activeAnimations = AnimationTracker:Update(character)
     if not activeAnimations or #activeAnimations == 0 then return end
     
     for _, anim in ipairs(activeAnimations) do
@@ -1604,11 +1568,8 @@ local function EvaluateParryTriggers()
         if not currentActiveIds[key] then
             AnimationRegistry[key] = nil
             if LastPendingRegData == val then
+                --print("Removed last pending reg data because the animation isnt playing")
                 LastPendingRegData = nil
-                if CurrentParryState ~= ParryState.IDLE then
-                    ResetParryState()
-                    TransitionToState(ParryState.IDLE)
-                end
             end
         end
     end
@@ -1621,35 +1582,36 @@ local function ProcessEspAndLogging()
     for i = #TargetCharacters, 1, -1 do
         local character = TargetCharacters[i]
         local tracker = EspTrackers[character]
-
-        if not character or not character.Parent or not tracker or not tracker.ChangeText then
-            EspTrackers[character] = nil
-            table.remove(TargetCharacters, i)
+        
+        if tracker and not tracker.ChangeText then 
+            EspTrackers[character] = nil 
+            table.remove(TargetCharacters, i) -- Safely removes and shifts elements
             continue
         end
 
-        local activeAnimations = TargetAnimationTracker:Update(character) or {}
+        -- Fetch active animations using your AnimationTracker system
+        local activeAnimations = AnimationTracker:Update(character) or {}
         local lines = {}
+        
+        if #activeAnimations == 0 then 
+            tracker:ChangeText("CurrentlyPlaying", "None", COLOR_WHITE) 
+            continue 
+        end 
 
-        for _, anim in ipairs(activeAnimations) do
-            if not anim.AnimationId then
-                continue
-            end
-
+        for i = 1, #activeAnimations do
+            local anim = activeAnimations[i]
+            if not anim.AnimationId then continue end        
+            
             local assetId = anim.AnimationId
-            local numericId = tonumber(tostring(assetId):match("%d+"))
-            if numericId and IgnoreIdSet[numericId] then
-                continue
-            end
-
+            local numericId = tonumber(string.match(tostring(assetId), "%d+"))
+            
+            if numericId and table.find(IgnoreIds, numericId) then continue end 
+            
             local poolData = GameConfig[tostring(assetId)]
-            local resolvedName = poolData and poolData.DisplayName or anim.Name or "Unknown"
-
-            if not poolData then
-                LogAnimation(assetId, {
-                    Name = resolvedName,
-                    AnimationId = assetId,
-                })
+            local resolvedName = poolData and poolData.DisplayName or anim.Name
+            
+            if not poolData then  
+                LogAnimation(assetId, { Name = resolvedName, AnimationId = assetId })
             end
 
             table.insert(lines, string.format(
@@ -1657,68 +1619,49 @@ local function ProcessEspAndLogging()
                 tostring(resolvedName),
                 poolData and poolData.Style or "???",
                 tostring(assetId),
-                anim.TimePosition or 0,
+                anim.TimePosition or 0.00,
                 poolData and poolData.ReactionTime or DefaultReactionTime,
                 poolData and "[Logged]" or "[Unknown]",
-                anim.Speed or 1
+                anim.Speed
             ))
         end
 
-        tracker:ChangeText(
-            "CurrentlyPlaying",
-            #lines > 0 and table.concat(lines, "\n") or "None",
-            COLOR_WHITE
-        )
+        if tracker and tracker.Name then  
+            tracker:ChangeText("CurrentlyPlaying", table.concat(lines, "\n"), COLOR_WHITE) 
+        end    
     end
 end
 
 local function ClearAllEspTrackers()
     for char, tracker in pairs(EspTrackers) do
         if tracker and tracker.Destroy then            
-            if ESPUtility and ESPUtility.TrackersToUpdate then
-                ESPUtility.TrackersToUpdate[tracker] = nil
+            if ESP_Utility.TrackersToUpdate[tracker] then
+                ESP_Utility.TrackersToUpdate[tracker] = nil
             end
 
+            -- 2. Destroy the tracker object
             tracker:Destroy()
         end
     end
     table.clear(EspTrackers) -- Safer than re-assigning {} to preserve table memory references
 end
 
-local function SameTargets(charactersList)
-    if #charactersList ~= #TargetCharacters then
-        return false
-    end
-
-    for index, character in ipairs(charactersList) do
-        if TargetCharacters[index] ~= character then
-            return false
-        end
-    end
-
-    return true
-end
-
 local function UpdateTargetCharacters(charactersList)
-    if SameTargets(charactersList) then
-        return
-    end
-
+    -- Clean up old trackers and clear previous target list
     ClearAllEspTrackers()
     table.clear(TargetCharacters)
 
-    for _, character in ipairs(charactersList) do
-        if character and character.Parent and not IsLocalCharacter(character) then
-            table.insert(TargetCharacters, character)
-
-            local root = character:FindFirstChild("HumanoidRootPart")
-            if root then
-                local tracker = ESPUtility.NewTracker(root, character.Name, COLOR_RED)
-                if tracker and tracker.AddText then
-                    tracker:AddText("CurrentlyPlaying", nil, "???")
-                end
-                EspTrackers[character] = tracker
+    -- Populate new targets
+    for _, character in charactersList do
+        table.insert(TargetCharacters, character)
+        
+        -- Apply ESP if a HumanoidRootPart exists
+        if character and character:FindFirstChild("HumanoidRootPart") then
+            local tracker = ESP_Utility.NewTracker(character.HumanoidRootPart, character.Name, COLOR_RED)
+            if tracker and tracker.Name then
+                tracker:AddText("CurrentlyPlaying", nil, "???")
             end
+            EspTrackers[character] = tracker
         end
     end
 end
@@ -1739,7 +1682,7 @@ function CycleEvent()
 
     for _, char in ipairs(allCharacters) do
         -- Prevent the script from targeting yourself
-        if IsLocalCharacter(char) then continue end 
+        if char == localCharacter then continue end 
 
         local targetRoot = char:FindFirstChild("HumanoidRootPart")
         if targetRoot then
@@ -1751,7 +1694,7 @@ function CycleEvent()
     end
     
     if #validCharacters == 0 then
-        CurrentIndex = 0
+        CurrentIndex = 1
         UpdateTargetCharacters({}) 
         if not AutoTargetNearest.Get() then  
             UI_Library:Notify("Cycle", "No targets found in range [".. MaxCycleRange.." studs]")            
@@ -1763,7 +1706,7 @@ function CycleEvent()
         return a.Distance < b.Distance
     end)
 
-    if MultiTarget.Get() then
+    if MuliTarget.Get() then
         local Max = 3
         local finalTargets = {}
         
@@ -1773,15 +1716,12 @@ function CycleEvent()
         
         UpdateTargetCharacters(finalTargets)
     else
-        local targetIndex
-        if AutoTargetNearest.Get() then
-            targetIndex = 1
-        else
-            CurrentIndex = (CurrentIndex % #validCharacters) + 1
-            targetIndex = CurrentIndex
-        end
-
-        UpdateTargetCharacters({ validCharacters[targetIndex].Character })
+        CurrentIndex = (CurrentIndex % #validCharacters) + 1
+        
+        local targetIndex = AutoTargetNearest.Get() and 1 or CurrentIndex
+        local selectedCharacter = validCharacters[targetIndex].Character
+        
+        UpdateTargetCharacters({selectedCharacter})
     end
 end
 
@@ -1801,14 +1741,16 @@ TrackConnection(UIS.InputBegan:Connect(function(input, gameProcessed)
     if input.KeyCode == Enum.KeyCode.F then
         local localCharacter = LocalPlayer.Character
         if localCharacter then
-            LocalAnimationTracker:Update(localCharacter)
+            LocalTracker:Update(localCharacter)
             OnInputF(os.clock())
         end
     end
 end))
 
-local UTILITY_TICK = 0.5
-local LastCycleCheck = 0
+
+local STATE_MACHINE_TICK = 0.05
+local UTILITY_TICK = 0.5 -- Run 2 times per second
+local LastCycleCheck = 0 
 
 local function MainLoop()
     local localCharacter = LocalPlayer.Character
@@ -1817,7 +1759,7 @@ local function MainLoop()
         return
     end
 
-    LocalAnimationTracker:Update(localCharacter)
+    LocalTracker:Update(localCharacter)
     EvaluateParryTriggers()
     ParryTask()
     scheduler.update()
@@ -1855,11 +1797,11 @@ Environment.__GAKURAN_AUTO_PARRY_CLEANUP = function()
     end
     table.clear(RuntimeConnections)
 
-    if damageLoggerConnection then
+    if connection then
         pcall(function()
-            damageLoggerConnection:Disconnect()
+            connection:Disconnect()
         end)
-        damageLoggerConnection = nil
+        connection = nil
     end
 
     pcall(BlockEnd)
@@ -1867,4 +1809,4 @@ Environment.__GAKURAN_AUTO_PARRY_CLEANUP = function()
     table.clear(pendingTasks)
 end
 
-print("[AutoParry] Updated script loaded successfully")
+print("[AutoParry] Improved core loaded successfully")
