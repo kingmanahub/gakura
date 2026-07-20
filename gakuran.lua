@@ -1,10 +1,28 @@
 local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
-local UIS = game:GetService("UserInputService")
 
+local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
+
+local UIS = game:GetService("UserInputService")
 local SelectedFolder = nil
 local CycleKeybind = Enum.KeyCode.X
+
+local URL = "https://raw.githubusercontent.com/artxficial/matchastuff/main/esp_utility.lua"
+local ImportESP = loadstring(game:HttpGet(URL))()
+
+local URL = "https://raw.githubusercontent.com/artxficial/matchastuff/main/animationtracker.lua"
+local ImportAnimationTracker = loadstring(game:HttpGet(URL))()
+
+local UI_Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/neaxusxgod-png/INS-ui/main/uilib.min.lua"))() or INSui
+
+local AnimationsLoggedCache = {}
+local AnimationsLoggedOrder = {}
+
+local ESPUtility = ImportESP or ESP_Utility
+local AnimationTrackerModule = ImportAnimationTracker or AnimationTracker
+if not UI_Library or not ESPUtility or not AnimationTrackerModule then
+    error("[AutoParry] A required dependency failed to initialize")
+end
 
 local Environment = (getgenv and getgenv()) or _G
 if Environment.__GAKURAN_AUTO_PARRY_CLEANUP then
@@ -19,52 +37,9 @@ local function TrackConnection(connection)
     return connection
 end
 
-local function LoadRemote(url, label)
-    local fetched, sourceOrError = pcall(function()
-        return game:HttpGet(url)
-    end)
-    if not fetched then
-        error(string.format("[%s] HttpGet failed: %s", label, tostring(sourceOrError)))
-    end
-
-    local chunk, compileError = loadstring(sourceOrError)
-    if not chunk then
-        error(string.format("[%s] Compile failed: %s", label, tostring(compileError)))
-    end
-
-    local ran, result = pcall(chunk)
-    if not ran then
-        error(string.format("[%s] Runtime failed: %s", label, tostring(result)))
-    end
-
-    return result
-end
-
-local ImportESP = LoadRemote(
-    "https://raw.githubusercontent.com/artxficial/matchastuff/main/esp_utility.lua",
-    "ESP Utility"
-)
-local ImportAnimationTracker = LoadRemote(
-    "https://raw.githubusercontent.com/artxficial/matchastuff/main/animationtracker.lua",
-    "Animation Tracker"
-)
-local UI_Library = LoadRemote(
-    "https://raw.githubusercontent.com/neaxusxgod-png/INS-ui/main/uilib.min.lua",
-    "UI Library"
-) or INSui
-
-local ESPUtility = ImportESP or ESP_Utility
-local AnimationTrackerModule = ImportAnimationTracker or AnimationTracker
-if not UI_Library or not ESPUtility or not AnimationTrackerModule then
-    error("[AutoParry] A required dependency failed to initialize")
-end
-
 local Traceback = (debug and debug.traceback) or function(err)
     return tostring(err)
 end
-
-local AnimationsLoggedCache = {}
-local AnimationsLoggedOrder = {}
 
 -- Forward declarations used by configuration callbacks and UI callbacks.
 local BlockStart
@@ -72,7 +47,6 @@ local BlockEnd
 local Dodge
 local OnInputF
 local ToggleDamageLogger
-local IncludeLocalCharacter = false
 
 
 -- ==========================================
@@ -417,6 +391,35 @@ local function GetAllFoldersInWorkspace()
     return folders
 end
 
+local function IsLocalCharacter(character)
+    if not character then
+        return false
+    end
+
+    -- Standard Roblox ownership check.
+    local owner = Players:GetPlayerFromCharacter(character)
+    if owner == LocalPlayer then
+        return true
+    end
+
+    local localCharacter = LocalPlayer.Character
+    if not localCharacter then
+        return false
+    end
+
+    if character == localCharacter then
+        return true
+    end
+
+    -- Some executor environments expose Instance.Address. Use it as a final
+    -- identity check in case the tracker returns a wrapper/reference.
+    local ok, sameAddress = pcall(function()
+        return character.Address == localCharacter.Address
+    end)
+
+    return ok and sameAddress == true
+end
+
 local function GetAllCharactersInFolder()
     local folder = SelectedFolder and game.Workspace:FindFirstChild(SelectedFolder)
     if not folder then
@@ -424,13 +427,12 @@ local function GetAllCharactersInFolder()
     end
 
     local characters = {}
-    local localCharacter = LocalPlayer.Character
 
     for _, character in ipairs(folder:GetChildren()) do
-        if character:IsA("Model") and character:FindFirstChildWhichIsA("Humanoid") then
-            if IncludeLocalCharacter or character ~= localCharacter then
-                table.insert(characters, character)
-            end
+        if character:IsA("Model")
+            and character:FindFirstChildWhichIsA("Humanoid")
+            and not IsLocalCharacter(character) then
+            table.insert(characters, character)
         end
     end
 
@@ -636,11 +638,6 @@ local function CreateFoldersSection()
     end)
     Range:Set(MaxCycleRange)
 
-
-    local IncludeLocalCharacterToggle = Folders_Section:Toggle("Include Local Character", false, function(on)
-        IncludeLocalCharacter = on
-        UpdateTargetPoolSection()   
-    end)
 
     local FolderCombo = Folders_Section:Dropdown("Live Folder", nil, folders, false, function(list)
         local Selected = list[1]
@@ -1711,7 +1708,7 @@ local function UpdateTargetCharacters(charactersList)
     table.clear(TargetCharacters)
 
     for _, character in ipairs(charactersList) do
-        if character and character.Parent then
+        if character and character.Parent and not IsLocalCharacter(character) then
             table.insert(TargetCharacters, character)
 
             local root = character:FindFirstChild("HumanoidRootPart")
@@ -1742,7 +1739,7 @@ function CycleEvent()
 
     for _, char in ipairs(allCharacters) do
         -- Prevent the script from targeting yourself
-        if char == localCharacter then continue end 
+        if IsLocalCharacter(char) then continue end 
 
         local targetRoot = char:FindFirstChild("HumanoidRootPart")
         if targetRoot then
