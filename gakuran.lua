@@ -883,6 +883,9 @@ local COLOR_WHITE = Color3.fromRGB(255, 255, 255)
 local COLOR_RED = Color3.fromRGB(255, 50, 50)
 local COLOR_GREEN = Color3.fromRGB(50, 255, 50)
 
+-- Keep target selection and animation checks active, but render no ESP on bodies.
+local SHOW_TARGET_ESP = false
+
 local AnimationRegistry = {}
 local LastPendingRegData = nil
 local InputRegisteredTime = nil
@@ -1348,23 +1351,37 @@ local function CheckCharacterDistance(localRoot, targetRoot)
     return (targetRoot.Position - localRoot.Position).Magnitude
 end
 
+
 local function UpdateCharacterESP(character, Distance)
-    if not AutoParryToggle.Get() then 
-        if EspTrackers[character] and EspTrackers[character].ChangeText then  
-            EspTrackers[character]:ChangeText("Name", "AUTO PARRY IS DISARMED", COLOR_RED)  
-        end
-        return true
-    elseif Distance > AutoParryRange then
-        if EspTrackers[character] and EspTrackers[character].ChangeText then  
-            EspTrackers[character]:ChangeText("Name", character.Name.. " | OUT OF RANGE", COLOR_RED)  
-        end
-        return false
-    else
-        if EspTrackers[character] and EspTrackers[character].ChangeText then  
-            EspTrackers[character]:ChangeText("Name", character.Name.. " IN RANGE", COLOR_GREEN)  
+    -- Preserve the original targeting/range checks.
+    if not AutoParryToggle.Get() then
+        if SHOW_TARGET_ESP then
+            local tracker = EspTrackers[character]
+            if tracker and tracker.ChangeText then
+                tracker:ChangeText("Name", "AUTO PARRY IS DISARMED", COLOR_RED)
+            end
         end
         return true
     end
+
+    if Distance > AutoParryRange then
+        if SHOW_TARGET_ESP then
+            local tracker = EspTrackers[character]
+            if tracker and tracker.ChangeText then
+                tracker:ChangeText("Name", character.Name .. " | OUT OF RANGE", COLOR_RED)
+            end
+        end
+        return false
+    end
+
+    if SHOW_TARGET_ESP then
+        local tracker = EspTrackers[character]
+        if tracker and tracker.ChangeText then
+            tracker:ChangeText("Name", character.Name .. " IN RANGE", COLOR_GREEN)
+        end
+    end
+
+    return true
 end
 
 local function CalculateParryTiming(attackConfig, StartTime)
@@ -1578,57 +1595,65 @@ end
 -- ==========================================
 -- ==========================================
 
+
 local function ProcessEspAndLogging()
     for i = #TargetCharacters, 1, -1 do
         local character = TargetCharacters[i]
-        local tracker = EspTrackers[character]
-        
-        if tracker and not tracker.ChangeText then 
-            EspTrackers[character] = nil 
-            table.remove(TargetCharacters, i) -- Safely removes and shifts elements
+
+        if not character or not character.Parent then
+            EspTrackers[character] = nil
+            table.remove(TargetCharacters, i)
             continue
         end
 
-        -- Fetch active animations using your AnimationTracker system
+        -- Keep scanning animations and logging unknown IDs in the background.
         local activeAnimations = AnimationTracker:Update(character) or {}
-        local lines = {}
-        
-        if #activeAnimations == 0 then 
-            tracker:ChangeText("CurrentlyPlaying", "None", COLOR_WHITE) 
-            continue 
-        end 
+        local tracker = EspTrackers[character]
+        local lines = SHOW_TARGET_ESP and {} or nil
 
-        for i = 1, #activeAnimations do
-            local anim = activeAnimations[i]
-            if not anim.AnimationId then continue end        
-            
-            local assetId = anim.AnimationId
-            local numericId = tonumber(string.match(tostring(assetId), "%d+"))
-            
-            if numericId and table.find(IgnoreIds, numericId) then continue end 
-            
-            local poolData = GameConfig[tostring(assetId)]
-            local resolvedName = poolData and poolData.DisplayName or anim.Name
-            
-            if not poolData then  
-                LogAnimation(assetId, { Name = resolvedName, AnimationId = assetId })
+        for _, anim in ipairs(activeAnimations) do
+            if not anim.AnimationId then
+                continue
             end
 
-            table.insert(lines, string.format(
-                "%s (%s) | ID: %s | Time: %.2f | Timing: %.2f %s | Speed: %.2f",
-                tostring(resolvedName),
-                poolData and poolData.Style or "???",
-                tostring(assetId),
-                anim.TimePosition or 0.00,
-                poolData and poolData.ReactionTime or DefaultReactionTime,
-                poolData and "[Logged]" or "[Unknown]",
-                anim.Speed
-            ))
+            local assetId = anim.AnimationId
+            local numericId = tonumber(string.match(tostring(assetId), "%d+"))
+
+            if numericId and table.find(IgnoreIds, numericId) then
+                continue
+            end
+
+            local poolData = GameConfig[tostring(assetId)]
+            local resolvedName = poolData and poolData.DisplayName or anim.Name
+
+            if not poolData then
+                LogAnimation(assetId, {
+                    Name = resolvedName,
+                    AnimationId = assetId,
+                })
+            end
+
+            if SHOW_TARGET_ESP then
+                table.insert(lines, string.format(
+                    "%s (%s) | ID: %s | Time: %.2f | Timing: %.2f %s | Speed: %.2f",
+                    tostring(resolvedName),
+                    poolData and poolData.Style or "???",
+                    tostring(assetId),
+                    anim.TimePosition or 0.00,
+                    poolData and poolData.ReactionTime or DefaultReactionTime,
+                    poolData and "[Logged]" or "[Unknown]",
+                    anim.Speed or 1
+                ))
+            end
         end
 
-        if tracker and tracker.Name then  
-            tracker:ChangeText("CurrentlyPlaying", table.concat(lines, "\n"), COLOR_WHITE) 
-        end    
+        if SHOW_TARGET_ESP and tracker and tracker.ChangeText then
+            tracker:ChangeText(
+                "CurrentlyPlaying",
+                #lines > 0 and table.concat(lines, "\n") or "None",
+                COLOR_WHITE
+            )
+        end
     end
 end
 
@@ -1646,21 +1671,26 @@ local function ClearAllEspTrackers()
     table.clear(EspTrackers) -- Safer than re-assigning {} to preserve table memory references
 end
 
+
 local function UpdateTargetCharacters(charactersList)
-    -- Clean up old trackers and clear previous target list
+    -- Preserve target selection/cycle behavior; only disable visual trackers.
     ClearAllEspTrackers()
     table.clear(TargetCharacters)
 
-    -- Populate new targets
     for _, character in charactersList do
         table.insert(TargetCharacters, character)
-        
-        -- Apply ESP if a HumanoidRootPart exists
-        if character and character:FindFirstChild("HumanoidRootPart") then
-            local tracker = ESP_Utility.NewTracker(character.HumanoidRootPart, character.Name, COLOR_RED)
+
+        if SHOW_TARGET_ESP and character and character:FindFirstChild("HumanoidRootPart") then
+            local tracker = ESP_Utility.NewTracker(
+                character.HumanoidRootPart,
+                character.Name,
+                COLOR_RED
+            )
+
             if tracker and tracker.Name then
                 tracker:AddText("CurrentlyPlaying", nil, "???")
             end
+
             EspTrackers[character] = tracker
         end
     end
