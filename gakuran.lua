@@ -7,6 +7,11 @@ local UIS = game:GetService("UserInputService")
 local SelectedFolder = nil
 local CycleKeybind = Enum.KeyCode.X
 
+-- Caching functions for micro-optimization
+local os_clock = os.clock
+local math_max = math.max
+local table_find = table.find
+
 local URL = "https://raw.githubusercontent.com/artxficial/matchastuff/main/esp_utility.lua"
 local ImportESP = loadstring(game:HttpGet(URL))()
 
@@ -172,7 +177,7 @@ local GameConfig = {
                     task.wait(.3)
                     Dodge()
                     task.wait(.35)
-                    BlockStart(os.clock(), 0.6)
+                    BlockStart(os_clock(), 0.6)
                 end)
             end,
         },
@@ -497,7 +502,7 @@ end
 --LiteGrabber(game.ReplicatedStorage.Assets.Anims.Weapon.Spear)
 
 local function UpdateSliders(OldReactionTime)
-    for animationId, Info in (GameConfig) do 
+    for animationId, Info in pairs(GameConfig) do 
         if AnimationIdSliders[animationId] then
             Info.DefaultReactionTime = DefaultReactionTime
             local ReactionTime = Info.M1Time or Info.ReactionTime or Info.DefaultReactionTime
@@ -511,13 +516,13 @@ local pendingTasks = {}
 
 function scheduler.delay(delayTime, callback)
     table.insert(pendingTasks, {
-        executeAt = os.clock() + delayTime,
+        executeAt = os_clock() + delayTime,
         callback = callback
     })
 end
 
 function scheduler.update()
-    local now = os.clock()
+    local now = os_clock()
     for i = #pendingTasks, 1, -1 do
         local task = pendingTasks[i]
         if now >= task.executeAt then
@@ -588,7 +593,7 @@ local function UpdateClipboardSection()
     local IgnoredIdsCount = #IgnoreIds
     local AnimationsLoggedCount = 0 
 
-    for i, v in AnimationsLoggedCache do  
+    for i, v in pairs(AnimationsLoggedCache) do  
         AnimationsLoggedCount += 1
     end
 
@@ -817,32 +822,42 @@ function checkRange(studs, origin)
         and (localRoot.Position - origin.Position).Magnitude < studs
 end
 
+local ActiveOrbs = {}
+
 local function ListenForOrbs()
-    print("[Orb] Listener active")
+    print("[Orb] Optimized listener active")
+    local thrownFolder = game.Workspace:WaitForChild("Thrown", 5)
+    if not thrownFolder then return end
+
+    -- Lọc vật thể khi chúng vừa sinh ra
+    TrackConnection(thrownFolder.ChildAdded:Connect(function(child)
+        if child:IsA("BasePart") and (child.Name == "ArdourBall2" or child.Name == "ArdourBall") then
+            ActiveOrbs[child] = true
+        end
+    end))
+
+    TrackConnection(thrownFolder.ChildRemoved:Connect(function(child)
+        if ActiveOrbs[child] then
+            ActiveOrbs[child] = nil
+        end
+    end))
 
     return TrackConnection(RunService.Heartbeat:Connect(function()
         if not AutoParryToggle.Get() then
             return
         end
 
-        local localRoot = GetLocalHRP()
-        local thrownFolder = game.Workspace:FindFirstChild("Thrown")
-        if not localRoot or not thrownFolder then
-            return
-        end
-
-        local now = os.clock()
+        local now = os_clock()
         if now - lastOrbParryAt < ORB_TRIGGER_COOLDOWN then
             return
         end
 
-        for _, orb in ipairs(thrownFolder:GetChildren()) do
-            if (orb.Name == "ArdourBall2" or orb.Name == "ArdourBall")
-                and orb:IsA("BasePart")
-                and orb.Parent
-                and orb:IsDescendantOf(thrownFolder)
-                and (localRoot.Position - orb.Position).Magnitude <= PARRY_DISTANCE then
+        local localRoot = GetLocalHRP()
+        if not localRoot then return end
 
+        local localPos = localRoot.Position
+        for orb, _ in pairs(ActiveOrbs) do
+            if orb.Parent and (localPos - orb.Position).Magnitude <= PARRY_DISTANCE then
                 if BlockStart(now, 0.10) then
                     lastOrbParryAt = now
                 end
@@ -1008,7 +1023,7 @@ function Dodge()
 end
 
 function BlockStart(startTime, holdFor)
-    local now = os.clock()
+    local now = os_clock()
     startTime = startTime or now
 
     if not AutoParryToggle.Get() then
@@ -1028,7 +1043,7 @@ function BlockStart(startTime, holdFor)
     end
 
     LastBlockInputAt = now
-    ReleaseDeadline = math.max(now, startTime) + (holdFor or BlockHoldTime)
+    ReleaseDeadline = math_max(now, startTime) + (holdFor or BlockHoldTime)
     KeyHeld = true
 
     if ismouse1pressed and ismouse1pressed() and mouse2click then
@@ -1061,7 +1076,7 @@ OnInputF = function(inputTime)
         return false
     end
 
-    InputRegisteredTime = inputTime or os.clock()
+    InputRegisteredTime = inputTime or os_clock()
     TransitionToState(ParryState.INPUT_PENDING)
     return true
 end
@@ -1135,7 +1150,7 @@ end
 -- Parrying animation detected
 local function OnParryingAnimationSuccess()
     if CurrentParryState == ParryState.INPUT_PENDING and InputRegisteredTime then
-        ParryRegisteredTime = os.clock()
+        ParryRegisteredTime = os_clock()
         InputLatency = ParryRegisteredTime - InputRegisteredTime
 
         if ParryDebugToggle:Get() then  
@@ -1232,7 +1247,7 @@ local function OnWindowExceeded()
 end
 
 local function ParryTask()
-    local now = os.clock()
+    local now = os_clock()
 
     if KeyHeld and now >= ReleaseDeadline then
         BlockEnd()
@@ -1278,11 +1293,11 @@ local ParryLearningLog = {}  -- {[animId] = {TriggerTime, Style, DisplayName, Co
 local function onLocalAnimationAdded(anim)
     local animId = anim.AnimationId
 
-    if table.find(ParriedAnimation, animId) then  
+    if table_find(ParriedAnimation, animId) then  
         OnSuccessfulParry()
     end
 
-    if table.find(ParryingAnimation, animId) then
+    if table_find(ParryingAnimation, animId) then
         if not InputRegisteredTime then return end 
 
         -- For someone reason it was running before UIS??
@@ -1294,7 +1309,7 @@ local function onLocalAnimationAdded(anim)
        -- end)
     end
     
-    if table.find(StunnedAnimation, animId) then
+    if table_find(StunnedAnimation, animId) then
         -- keypress(string.byte()) if u f in a stun u get a shaky block 
        OnStunned()
     end
@@ -1408,7 +1423,7 @@ local function UpdateAnimationRegistry(animKey, anim, now, currentTrackTime, att
             StartTime = adjustedNow,
             Processed = false,
             Attempted = false,
-            CurrentClockTime = os.clock(),
+            CurrentClockTime = os_clock(),
             CurrentTrackTime = currentTrackTime,
             ReactionTime = attackConfig,
             Ignore = false,
@@ -1434,7 +1449,7 @@ local function UpdateAnimationRegistry(animKey, anim, now, currentTrackTime, att
         regData.StartTime = now - currentTrackTime
     end
     
-    regData.CurrentClockTime = os.clock()
+    regData.CurrentClockTime = os_clock()
     regData.CurrentTrackTime = currentTrackTime
 
     if LastPendingRegData == regData then
@@ -1463,7 +1478,7 @@ local function ExecuteParry(regData, attackConfig)
         return
     end
 
-    local now = os.clock()
+    local now = os_clock()
     local isHeavy = attackConfig.DisplayName == "M2"
         or attackConfig.DisplayName == "Heavy"
         or attackConfig.Heavy
@@ -1518,7 +1533,7 @@ local function EvaluateAnimation(anim, character, localCharacter, localRoot, tar
     currentActiveIds[animKey] = true
     
     -- ANIMATION REGISTRY & STATE
-    local now = os.clock()
+    local now = os_clock()
     local regData = UpdateAnimationRegistry(animKey, anim, now, anim.TimePosition or 0, attackConfig)
     if regData.Processed then return end
     
@@ -1568,12 +1583,15 @@ local function EvaluateCharacter(character, localCharacter, localRoot, currentAc
     end
 end
 
+local ReusableActiveIds = {}
+
 local function EvaluateParryTriggers()
     -- SETUP & VALIDATION
     local localCharacter, localRoot = ValidateLocalCharacter()
     if not localCharacter or not localRoot then return end
     
-    local currentActiveIds = {}
+    table.clear(ReusableActiveIds)
+    local currentActiveIds = ReusableActiveIds
 
     -- CHARACTER ITERATION
     for _, character in ipairs(TargetCharacters) do
@@ -1585,7 +1603,6 @@ local function EvaluateParryTriggers()
         if not currentActiveIds[key] then
             AnimationRegistry[key] = nil
             if LastPendingRegData == val then
-                --print("Removed last pending reg data because the animation isnt playing")
                 LastPendingRegData = nil
             end
         end
@@ -1619,7 +1636,7 @@ local function ProcessEspAndLogging()
             local assetId = anim.AnimationId
             local numericId = tonumber(string.match(tostring(assetId), "%d+"))
 
-            if numericId and table.find(IgnoreIds, numericId) then
+            if numericId and table_find(IgnoreIds, numericId) then
                 continue
             end
 
@@ -1677,7 +1694,7 @@ local function UpdateTargetCharacters(charactersList)
     ClearAllEspTrackers()
     table.clear(TargetCharacters)
 
-    for _, character in charactersList do
+    for _, character in ipairs(charactersList) do
         table.insert(TargetCharacters, character)
 
         if SHOW_TARGET_ESP and character and character:FindFirstChild("HumanoidRootPart") then
@@ -1772,7 +1789,7 @@ TrackConnection(UIS.InputBegan:Connect(function(input, gameProcessed)
         local localCharacter = LocalPlayer.Character
         if localCharacter then
             LocalTracker:Update(localCharacter)
-            OnInputF(os.clock())
+            OnInputF(os_clock())
         end
     end
 end))
@@ -1790,11 +1807,15 @@ local function MainLoop()
     end
 
     LocalTracker:Update(localCharacter)
-    EvaluateParryTriggers()
-    ParryTask()
+    
+    if AutoParryToggle.Get() then
+        EvaluateParryTriggers()
+        ParryTask()
+    end
+    
     scheduler.update()
 
-    local now = os.clock()
+    local now = os_clock()
     if now - LastCycleCheck >= UTILITY_TICK then
         LastCycleCheck = now
 
@@ -1813,8 +1834,8 @@ end
 local lastLoopErrorAt = 0
 TrackConnection(RunService.RenderStepped:Connect(function()
     local ok, loopError = xpcall(MainLoop, Traceback)
-    if not ok and os.clock() - lastLoopErrorAt >= 1 then
-        lastLoopErrorAt = os.clock()
+    if not ok and os_clock() - lastLoopErrorAt >= 1 then
+        lastLoopErrorAt = os_clock()
         warn("[AutoParry MainLoop] " .. tostring(loopError))
     end
 end))
@@ -1839,4 +1860,4 @@ Environment.__GAKURAN_AUTO_PARRY_CLEANUP = function()
     table.clear(pendingTasks)
 end
 
-print("[AutoParry] Improved core loaded successfully")
+print("[AutoParry] Optimized core loaded successfully")
