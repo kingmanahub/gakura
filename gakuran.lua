@@ -10,9 +10,6 @@ local CycleKeybind = Enum.KeyCode.X
 -- Caching functions for micro-optimization
 local os_clock = os.clock
 local math_max = math.max
-local math_min = math.min
-local math_abs = math.abs
-local math_clamp = math.clamp
 local table_find = table.find
 
 local URL = "https://raw.githubusercontent.com/artxficial/matchastuff/main/esp_utility.lua"
@@ -340,20 +337,6 @@ local StunnedAnimation = {"rbxassetid://9598562590", "rbxassetid://9598537410", 
 local ParryingAnimation = {"rbxassetid://118147060185189"}
 local ParryFailed = {"rbxassetid://4210597123"} -- BlockHit
 
-local function ArrayToSet(array)
-    local set = {}
-    for i = 1, #array do
-        set[array[i]] = true
-    end
-    return set
-end
-
--- O(1) local-animation classification instead of table.find on every event.
-local ParriedAnimationSet = ArrayToSet(ParriedAnimation)
-local StunnedAnimationSet = ArrayToSet(StunnedAnimation)
-local ParryingAnimationSet = ArrayToSet(ParryingAnimation)
-local ParryFailedSet = ArrayToSet(ParryFailed)
-
 
 local AutoParryRange = 10
 local MaxCycleRange = 20
@@ -362,16 +345,6 @@ local ProbabilityToParry = 100
 local DefaultReactionTime = 0.1
 local ParryOffset = 0
 local BlockHoldTime = 0.4
-
--- Timing stability controls. These are deliberately conservative so configured
--- reaction times still remain the main source of truth.
-local INPUT_ACK_TIMEOUT_MIN = 0.12
-local INPUT_ACK_TIMEOUT_MAX = 0.35
-local INPUT_LATENCY_ALPHA = 0.20
-local MAX_INPUT_COMPENSATION = 0.06
-local MAX_FRAME_LOOKAHEAD = 0.012
-local SUCCESS_EVENT_GRACE = 0.08
-local LOOP_RESET_EPSILON = 0.02
 
 
 -- ==========================================
@@ -551,13 +524,12 @@ end
 function scheduler.update()
     local now = os_clock()
     for i = #pendingTasks, 1, -1 do
-        local pending = pendingTasks[i]
-        if now >= pending.executeAt then
+        local task = pendingTasks[i]
+        if now >= task.executeAt then
             table.remove(pendingTasks, i)
 
-            -- Do not name this local variable `task`; that shadows Roblox's task library.
             task.spawn(function()
-                local ok, callbackError = xpcall(pending.callback, Traceback)
+                local ok, callbackError = xpcall(task.callback, Traceback)
                 if not ok then
                     warn("[Scheduler] " .. tostring(callbackError))
                 end
@@ -591,7 +563,6 @@ local TargetPool_Text = Folders_Section:Label("NO TARGETS FOUND")
 local Hint = AP_Section:Label("You have to press X in order to target someone or turn on Auto Target Nearest")
 local AutoParryToggle = AP_Section:Toggle("Auto Parry", true):AddKeybind("g", "Toggle")
 local AutoDodgeToggle = AP_Section:Toggle("Auto Dodge", true)
-local CancelSprintToggle = AP_Section:Toggle("Cancel Sprint On Parry", true)
 
 local ParryDebugToggle = Config_Section:Toggle("Debug Parry", false)
 
@@ -704,9 +675,7 @@ local function CreateAPSection()
     AP_Section:Divider("Conditions")
 
     TargetFacingYou = AP_Section:Toggle("Target facing you", false)
-    -- Disabled by default: this filter was rejecting ordinary M1 attacks
-    -- whenever the local character was not facing the selected target closely enough.
-    YouFacingTarget = AP_Section:Toggle("You facing target", false)
+    YouFacingTarget = AP_Section:Toggle("You facing target", true)
     
     local Offset = Config_Section:Slider("Parry offset", 0, 0.01, -0.1, 0.1, "s",function(v)
         ParryOffset = v
@@ -905,38 +874,6 @@ end
 local ParryKey = string.byte("F")
 local DodgeKey = string.byte("Q")
 
--- Windows virtual-key codes. Releasing all three variants makes sprint cancel
--- work whether the game listens to generic Shift, LeftShift, or RightShift.
-local SHIFT_KEY = 0x10
-local LEFT_SHIFT_KEY = 0xA0
-local RIGHT_SHIFT_KEY = 0xA1
-local SPRINT_SUPPRESS_DURATION = 0.22
-local SprintSuppressUntil = 0
-
-local function ReleaseSprintKeys()
-    keyrelease(SHIFT_KEY)
-    keyrelease(LEFT_SHIFT_KEY)
-    keyrelease(RIGHT_SHIFT_KEY)
-end
-
-local function CancelSprintForParry(now)
-    if not CancelSprintToggle.Get() then
-        return
-    end
-
-    now = now or os_clock()
-    SprintSuppressUntil = math_max(SprintSuppressUntil, now + SPRINT_SUPPRESS_DURATION)
-    ReleaseSprintKeys()
-end
-
-local function UpdateSprintSuppression(now)
-    if now < SprintSuppressUntil then
-        -- Repeat for several frames. This prevents a physically held Shift key
-        -- or a delayed sprint state from immediately re-enabling sprint.
-        ReleaseSprintKeys()
-    end
-end
-
 local KeyHeld = false
 local ReleaseDeadline = 0
 local LastBlockInputAt = 0
@@ -969,8 +906,6 @@ local LastPendingRegData = nil
 local InputRegisteredTime = nil
 local ParryRegisteredTime = nil
 local InputLatency = 0 -- (Parry - Input)
-local SmoothedInputLatency = 0.02
-local LastFrameDelta = 1 / 60
 
 local OnInputF
 
@@ -1075,8 +1010,6 @@ local function ResetParryState()
     ReleaseDeadline = 0
     BlockEnd()
     InputRegisteredTime = nil
-    ParryRegisteredTime = nil
-    LastPendingRegData = nil
 end
 
 function Dodge()
@@ -1113,11 +1046,6 @@ function BlockStart(startTime, holdFor)
     ReleaseDeadline = math_max(now, startTime) + (holdFor or BlockHoldTime)
     KeyHeld = true
 
-    -- Cancel sprint only after all parry validation succeeds, immediately before F.
-    -- There is intentionally no task.wait here because even one delayed frame can
-    -- move the input outside a narrow parry window.
-    CancelSprintForParry(now)
-
     if ismouse1pressed and ismouse1pressed() and mouse2click then
         mouse2click()
     end
@@ -1137,13 +1065,7 @@ end
 -- ==========================================
 
 local function TransitionToState(newState)
-    if CurrentParryState == newState then
-        return
-    end
-
-    if ParryDebugToggle:Get() then
-        print(string.format("[Parry] %s -> %s", CurrentParryState, newState))
-    end
+    print(string.format("[Parry] %s -> %s", CurrentParryState, newState))
     CurrentParryState = newState
 end
 
@@ -1231,12 +1153,6 @@ local function OnParryingAnimationSuccess()
         ParryRegisteredTime = os_clock()
         InputLatency = ParryRegisteredTime - InputRegisteredTime
 
-        -- Exponential moving average filters one-frame spikes while adapting to
-        -- the current input/animation acknowledgement delay.
-        if InputLatency > 0 and InputLatency < INPUT_ACK_TIMEOUT_MAX then
-            SmoothedInputLatency += (InputLatency - SmoothedInputLatency) * INPUT_LATENCY_ALPHA
-        end
-
         if ParryDebugToggle:Get() then  
             DebugParry()
         end
@@ -1247,14 +1163,8 @@ end
 
 -- Parrying window passed without parrying
 local function OnParryingAnimationFailed()
-    if CurrentParryState ~= ParryState.INPUT_PENDING
-        and CurrentParryState ~= ParryState.PARRYING then
+    if CurrentParryState ~= ParryState.INPUT_PENDING then
         return
-    end
-
-    if LastPendingRegData then
-        LastPendingRegData.Success = false
-        LastPendingRegData.Processed = true
     end
 
     TransitionToState(ParryState.PARRYINGFAILED)
@@ -1287,12 +1197,6 @@ end
 
 
 local function OnSuccessfulParry()
-    -- Some trackers can report the success animation before the shorter
-    -- "parrying" acknowledgement event. Accept either event order.
-    if CurrentParryState == ParryState.INPUT_PENDING and InputRegisteredTime then
-        OnParryingAnimationSuccess()
-    end
-
     if CurrentParryState ~= ParryState.PARRYING or not LastPendingRegData then
         return
     end
@@ -1305,12 +1209,7 @@ local function OnSuccessfulParry()
     end
 
     local parryPressTime = InputRegisteredTime - LastPendingRegData.StartTime
-    local latestReasonableTime = (LastPendingRegData.BlockExpire - LastPendingRegData.StartTime) + SUCCESS_EVENT_GRACE
-    if parryPressTime < 0 or parryPressTime > latestReasonableTime then
-        LastPendingRegData.Success = false
-        LastPendingRegData.Processed = true
-        ResetParryState()
-        TransitionToState(ParryState.IDLE)
+    if parryPressTime < 0 or parryPressTime > 1 then
         return
     end
 
@@ -1347,9 +1246,7 @@ local function OnWindowExceeded()
     TransitionToState(ParryState.IDLE)
 end
 
-local ReusableLocalActiveIds = {}
-
-local function ParryTask(localActiveAnimations)
+local function ParryTask()
     local now = os_clock()
 
     if KeyHeld and now >= ReleaseDeadline then
@@ -1357,32 +1254,21 @@ local function ParryTask(localActiveAnimations)
     end
 
     if CurrentParryState == ParryState.INPUT_PENDING then
-        local maxLatency = math_clamp(
-            SmoothedInputLatency * 3 + 0.06,
-            INPUT_ACK_TIMEOUT_MIN,
-            INPUT_ACK_TIMEOUT_MAX
-        )
+        local maxLatency = 0.5
         local timeSinceInput = InputRegisteredTime and (now - InputRegisteredTime) or math.huge
+        local activeAnims = GetActiveAnimationsForCharacterAsDictionary(
+            LocalPlayer.Character,
+            LocalTracker
+        )
 
-        -- Reuse the LocalTracker result already collected by MainLoop. This removes
-        -- a second tracker scan and a new dictionary allocation on every frame.
-        table.clear(ReusableLocalActiveIds)
-        for _, anim in ipairs(localActiveAnimations or {}) do
-            if anim.AnimationId then
-                ReusableLocalActiveIds[anim.AnimationId] = true
-            end
-        end
-
-        if ReusableLocalActiveIds[ParryingAnimation[1]] then
+        if activeAnims[ParryingAnimation[1]] then
             OnParryingAnimationSuccess()
         elseif timeSinceInput > maxLatency then
-            if ParryDebugToggle:Get() then
-                warn(string.format(
-                    "Parrying animation did not appear (max %.2fs, waited %.2fs)",
-                    maxLatency,
-                    timeSinceInput
-                ))
-            end
+            warn(string.format(
+                "Parrying animation did not appear (max %.2fs, waited %.2fs)",
+                maxLatency,
+                timeSinceInput
+            ))
             OnParryingAnimationFailed()
         end
 
@@ -1393,9 +1279,7 @@ local function ParryTask(localActiveAnimations)
             return
         end
 
-        -- The local success animation/event can arrive a few frames after the
-        -- configured attack window. Keep a small grace period before declaring failure.
-        if now > LastPendingRegData.BlockExpire + SUCCESS_EVENT_GRACE then
+        if now > LastPendingRegData.BlockExpire then
             OnWindowExceeded()
         end
     end
@@ -1408,29 +1292,26 @@ local ParryLearningLog = {}  -- {[animId] = {TriggerTime, Style, DisplayName, Co
 
 local function onLocalAnimationAdded(anim)
     local animId = anim.AnimationId
-    if not animId then return end
 
-    if ParriedAnimationSet[animId] then
+    if table_find(ParriedAnimation, animId) then  
         OnSuccessfulParry()
-        return
     end
 
-    if ParryingAnimationSet[animId] then
-        if InputRegisteredTime then
-            OnParryingAnimationSuccess()
-        end
-        return
-    end
+    if table_find(ParryingAnimation, animId) then
+        if not InputRegisteredTime then return end 
 
-    -- A block-hit/failure signal lets the state machine recover immediately
-    -- instead of staying locked until the acknowledgement timeout expires.
-    if ParryFailedSet[animId] then
-        OnParryingAnimationFailed()
-        return
+        -- For someone reason it was running before UIS??
+       --scheduler.delay(0.01, function()
+          --  if InputRegisteredTime then
+                --EvaluateParrySuccess()
+                OnParryingAnimationSuccess()
+          --  end
+       -- end)
     end
-
-    if StunnedAnimationSet[animId] then
-        OnStunned()
+    
+    if table_find(StunnedAnimation, animId) then
+        -- keypress(string.byte()) if u f in a stun u get a shaky block 
+       OnStunned()
     end
 end
 
@@ -1518,36 +1399,32 @@ local function UpdateCharacterESP(character, Distance)
     return true
 end
 
-local function CalculateParryTiming(attackConfig, StartTime, playbackSpeed)
-    local speed = math_max(tonumber(playbackSpeed) or 1, 0.05)
-    local optimalReactionTime = attackConfig.ReactionTime or DefaultReactionTime
+local function CalculateParryTiming(attackConfig, StartTime)
+    
+    local optimalReactionTime = (attackConfig.ReactionTime or DefaultReactionTime)
+    local adjustedReactionTime = optimalReactionTime + ParryOffset -- - pingDelay
+    
+    local parryWindowStart = adjustedReactionTime
+    local parryWindowEnd = adjustedReactionTime + ParryWindow
 
-    -- ReactionTime is calibrated at normal animation speed. Scale it when the
-    -- animation is sped up/slowed down, then compensate only a conservative
-    -- portion of the measured input acknowledgement delay.
-    local scaledReactionTime = optimalReactionTime / speed
-    local inputCompensation = math_min(SmoothedInputLatency * 0.5, MAX_INPUT_COMPENSATION)
-    local adjustedReactionTime = math_max(0, scaledReactionTime + ParryOffset - inputCompensation)
-
-    local ClockStart = StartTime + adjustedReactionTime
-    local ClockEnd = ClockStart + ParryWindow
+    local ClockStart = StartTime + parryWindowStart
+    local ClockEnd = StartTime + parryWindowEnd
+    
     return ClockStart, ClockEnd
 end
 
 local function UpdateAnimationRegistry(animKey, anim, now, currentTrackTime, attackConfig)
-    local playbackSpeed = math_max(tonumber(anim.Speed) or 1, 0.05)
-    local estimatedStartTime = now - (currentTrackTime / playbackSpeed)
 
     if not AnimationRegistry[animKey] then
-        local BlockStart, BlockExpire = CalculateParryTiming(attackConfig, estimatedStartTime, playbackSpeed)
+        local adjustedNow = now - currentTrackTime
+        local BlockStart, BlockExpire = CalculateParryTiming(attackConfig, adjustedNow)
 
         AnimationRegistry[animKey] = {
-            StartTime = estimatedStartTime,
+            StartTime = adjustedNow,
             Processed = false,
             Attempted = false,
-            CurrentClockTime = now,
+            CurrentClockTime = os_clock(),
             CurrentTrackTime = currentTrackTime,
-            PlaybackSpeed = playbackSpeed,
             ReactionTime = attackConfig,
             Ignore = false,
             AnimationId = anim.AnimationId,
@@ -1557,55 +1434,40 @@ local function UpdateAnimationRegistry(animKey, anim, now, currentTrackTime, att
             RandomNum = math.random(1, 100),
         }
     end
-
+    
     local regData = AnimationRegistry[animKey]
-
-    -- Use an epsilon so tiny TimePosition jitter is not mistaken for a loop.
-    if regData.CurrentTrackTime and currentTrackTime + LOOP_RESET_EPSILON < regData.CurrentTrackTime then
-        local BlockStart, BlockExpire = CalculateParryTiming(attackConfig, estimatedStartTime, playbackSpeed)
-
+    
+    if regData.CurrentTrackTime and (currentTrackTime < regData.CurrentTrackTime) then
+        local BlockStart, BlockExpire = CalculateParryTiming(attackConfig, now - currentTrackTime)
+        
         regData.Processed = false
         regData.Attempted = false
         regData.DidALoop = true
+        warn("Loop detected")
         regData.BlockStart = BlockStart
         regData.BlockExpire = BlockExpire
-        regData.StartTime = estimatedStartTime
-        regData.RandomNum = math.random(1, 100)
+        regData.StartTime = now - currentTrackTime
+    end
+    
+    regData.CurrentClockTime = os_clock()
+    regData.CurrentTrackTime = currentTrackTime
 
-        if ParryDebugToggle:Get() then
-            warn("[Parry] Animation loop detected")
-        end
-    elseif math_abs(playbackSpeed - (regData.PlaybackSpeed or playbackSpeed)) > 0.05 and not regData.Attempted then
-        -- Recalculate an uncommitted window when animation speed changes materially.
-        local BlockStart, BlockExpire = CalculateParryTiming(attackConfig, estimatedStartTime, playbackSpeed)
-        regData.StartTime = estimatedStartTime
-        regData.BlockStart = BlockStart
-        regData.BlockExpire = BlockExpire
+    if LastPendingRegData == regData then
+        LastPendingRegData = regData
     end
 
-    regData.CurrentClockTime = now
-    regData.CurrentTrackTime = currentTrackTime
-    regData.PlaybackSpeed = playbackSpeed
     return regData
 end
 
 local function CheckAnimationDirection(character, localCharacter, localRoot, targetRoot, attackConfig)
     if character.Address == localCharacter.Address then return true end
-
-    local displacement = targetRoot.Position - localRoot.Position
-    if displacement.Magnitude <= 0.001 then return true end
-
-    local direction = displacement.Unit
+    
+    local direction = (targetRoot.Position - localRoot.Position).Unit
     local isHeavy = attackConfig.DisplayName == "M2" or attackConfig.DisplayName == "Heavy" or attackConfig.Heavy
     
-    if not isHeavy then
-        -- Use method calls consistently and only apply direction filters when
-        -- the corresponding option is explicitly enabled by the user.
-        local requireTargetFacing = TargetFacingYou and TargetFacingYou.Get and TargetFacingYou:Get()
-        local requireYouFacing = YouFacingTarget and YouFacingTarget.Get and YouFacingTarget:Get()
-
-        if requireTargetFacing and targetRoot.CFrame.LookVector:Dot(-direction) < 0.25 then return false end
-        if requireYouFacing and localRoot.CFrame.LookVector:Dot(direction) < 0.25 then return false end
+    if not isHeavy then  
+        if TargetFacingYou.Get() and targetRoot.CFrame.LookVector:Dot(-direction) < 0.25 then return false end
+        if YouFacingTarget.Get() and localRoot.CFrame.LookVector:Dot(direction) < 0.25 then return false end
     end
     
     return true
@@ -1661,141 +1523,86 @@ local function ExecuteParry(regData, attackConfig)
     end
 end
 
-local function SelectBetterCandidate(bestCandidate, candidate)
-    if not bestCandidate then
-        return candidate
-    end
-
-    local bestData = bestCandidate.RegistryData
-    local candidateData = candidate.RegistryData
-
-    -- The window that expires first is the attack most likely to be missed.
-    if candidateData.BlockExpire < bestData.BlockExpire then
-        return candidate
-    end
-
-    if candidateData.BlockExpire == bestData.BlockExpire then
-        if candidateData.BlockStart < bestData.BlockStart then
-            return candidate
-        end
-
-        if candidateData.BlockStart == bestData.BlockStart and candidate.Distance < bestCandidate.Distance then
-            return candidate
-        end
-    end
-
-    return bestCandidate
-end
-
-local function EvaluateAnimation(anim, character, localCharacter, localRoot, targetRoot, distance, currentActiveIds, now)
-    if not anim.AnimationId then return nil end
+local function EvaluateAnimation(anim, character, localCharacter, localRoot, targetRoot, currentActiveIds)
+    -- ANIMATION VALIDATION
+    if not anim.AnimationId then return end
     local attackConfig = GameConfig[tostring(anim.AnimationId)]
-    if not attackConfig then return nil end
-
+    if not attackConfig then return end
+    
     local animKey = anim.Address or anim
     currentActiveIds[animKey] = true
-
+    
+    -- ANIMATION REGISTRY & STATE
+    local now = os_clock()
     local regData = UpdateAnimationRegistry(animKey, anim, now, anim.TimePosition or 0, attackConfig)
-    if regData.Processed then return nil end
-
-    if attackConfig.ParryFunction and (now - regData.StartTime) <= (attackConfig.ReactionTime or DefaultReactionTime) + ParryWindow / 2 then
+    if regData.Processed then return end
+    
+    -- PARRY FUNCTION OVERRIDE
+    if attackConfig.ParryFunction and (now - regData.StartTime) <= (attackConfig.ReactionTime or DefaultReactionTime) + ParryWindow/2 then
         attackConfig.ParryFunction({
             RegistryData = regData,
             Mob = character,
             AnimationData = anim,
             AnimationTracker = AnimationTracker,
         })
-        return nil
+        return
     end
-
-    if not CheckAnimationDirection(character, localCharacter, localRoot, targetRoot, attackConfig) then
-        return nil
-    end
-
+    
+    -- DIRECTION CHECKS
+    if not CheckAnimationDirection(character, localCharacter, localRoot, targetRoot, attackConfig) then return end
+    
     if regData.RandomNum > ProbabilityToParry then
         regData.Processed = true
-        return nil
+--        print("Skip b/c PTP", RandomNum, ProbabilityToParry)
+        return
     end
-
-    -- Predict the next render step so a narrow window is not missed merely
-    -- because BlockStart falls a few milliseconds after this frame.
-    local frameLookahead = math_min(LastFrameDelta * 0.75, MAX_FRAME_LOOKAHEAD)
-    if now + frameLookahead >= regData.BlockStart and now <= regData.BlockExpire then
-        return {
-            RegistryData = regData,
-            AttackConfig = attackConfig,
-            Distance = distance,
-        }
+    
+    -- PARRY EXECUTION
+    if now >= regData.BlockStart and now <= regData.BlockExpire then
+    --    if not LastPendingRegData or LastPendingRegData.Proc then
+            ExecuteParry(regData, attackConfig)
+    --    end
     end
-
-    return nil
 end
 
-local function EvaluateCharacter(character, localCharacter, localRoot, currentActiveIds, now, bestCandidate)
+local function EvaluateCharacter(character, localCharacter, localRoot, currentActiveIds)
+    -- CHARACTER VALIDATION
     local targetRoot = ValidateTargetCharacter(character)
-    if not targetRoot then return bestCandidate end
-
-    local distance = CheckCharacterDistance(localRoot, targetRoot)
-    if not UpdateCharacterESP(character, distance) then return bestCandidate end
-
+    if not targetRoot then return end
+    
+    -- CHARACTER DISTANCE & ESP
+    local Distance = CheckCharacterDistance(localRoot, targetRoot)
+    if not UpdateCharacterESP(character, Distance) then return end
+    
+    -- ANIMATION LOOP
     local activeAnimations = AnimationTracker:Update(character)
-    if not activeAnimations or #activeAnimations == 0 then return bestCandidate end
-
+    if not activeAnimations or #activeAnimations == 0 then return end
+    
     for _, anim in ipairs(activeAnimations) do
-        local candidate = EvaluateAnimation(
-            anim,
-            character,
-            localCharacter,
-            localRoot,
-            targetRoot,
-            distance,
-            currentActiveIds,
-            now
-        )
-
-        if candidate then
-            bestCandidate = SelectBetterCandidate(bestCandidate, candidate)
-        end
+        EvaluateAnimation(anim, character, localCharacter, localRoot, targetRoot, currentActiveIds)
     end
-
-    return bestCandidate
 end
 
 local ReusableActiveIds = {}
 
 local function EvaluateParryTriggers()
+    -- SETUP & VALIDATION
     local localCharacter, localRoot = ValidateLocalCharacter()
     if not localCharacter or not localRoot then return end
-
-    local now = os_clock()
+    
     table.clear(ReusableActiveIds)
     local currentActiveIds = ReusableActiveIds
-    local bestCandidate = nil
 
-    -- Preserve the existing target list/cycle behavior, but arbitrate all active
-    -- attacks before committing one global parry input.
+    -- CHARACTER ITERATION
     for _, character in ipairs(TargetCharacters) do
-        bestCandidate = EvaluateCharacter(
-            character,
-            localCharacter,
-            localRoot,
-            currentActiveIds,
-            now,
-            bestCandidate
-        )
+        EvaluateCharacter(character, localCharacter, localRoot, currentActiveIds)
     end
 
-    if bestCandidate and CurrentParryState == ParryState.IDLE then
-        ExecuteParry(bestCandidate.RegistryData, bestCandidate.AttackConfig)
-    end
-
-    for key, regData in pairs(AnimationRegistry) do
+    -- CLEANUP
+    for key, val in pairs(AnimationRegistry) do
         if not currentActiveIds[key] then
             AnimationRegistry[key] = nil
-
-            -- Do not drop the source attack while its parry state is awaiting a
-            -- local acknowledgement/success event.
-            if LastPendingRegData == regData and CurrentParryState == ParryState.IDLE then
+            if LastPendingRegData == val then
                 LastPendingRegData = nil
             end
         end
@@ -1988,33 +1795,27 @@ TrackConnection(UIS.InputBegan:Connect(function(input, gameProcessed)
 end))
 
 
+local STATE_MACHINE_TICK = 0.05
 local UTILITY_TICK = 0.5 -- Run 2 times per second
 local LastCycleCheck = 0 
 
 local function MainLoop()
-    local now = os_clock()
-    UpdateSprintSuppression(now)
-
     local localCharacter = LocalPlayer.Character
     local humanoid = localCharacter and localCharacter:FindFirstChildOfClass("Humanoid")
     if not localCharacter or not humanoid or humanoid.Health <= 0 then
-        if KeyHeld then
-            BlockEnd()
-        end
         return
     end
 
-    local localActiveAnimations = LocalTracker:Update(localCharacter) or {}
-
+    LocalTracker:Update(localCharacter)
+    
     if AutoParryToggle.Get() then
         EvaluateParryTriggers()
+        ParryTask()
     end
-
-    -- State cleanup and key release must continue even when Auto Parry is toggled off.
-    ParryTask(localActiveAnimations)
+    
     scheduler.update()
 
-    now = os_clock()
+    local now = os_clock()
     if now - LastCycleCheck >= UTILITY_TICK then
         LastCycleCheck = now
 
@@ -2031,11 +1832,7 @@ if game.PlaceId == 8668476218 or game.PlaceId == 134572803901609 then
 end
 
 local lastLoopErrorAt = 0
-TrackConnection(RunService.RenderStepped:Connect(function(deltaTime)
-    if deltaTime and deltaTime > 0 then
-        LastFrameDelta = math_clamp(deltaTime, 1 / 300, 0.05)
-    end
-
+TrackConnection(RunService.RenderStepped:Connect(function()
     local ok, loopError = xpcall(MainLoop, Traceback)
     if not ok and os_clock() - lastLoopErrorAt >= 1 then
         lastLoopErrorAt = os_clock()
@@ -2058,10 +1855,9 @@ Environment.__GAKURAN_AUTO_PARRY_CLEANUP = function()
         connection = nil
     end
 
-    SprintSuppressUntil = 0
     pcall(BlockEnd)
     pcall(ClearAllEspTrackers)
     table.clear(pendingTasks)
 end
 
-print("[AutoParry] Safe optimized core with sprint cancel loaded successfully")
+print("[AutoParry] Optimized core loaded successfully")
