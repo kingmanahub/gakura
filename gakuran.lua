@@ -7,11 +7,6 @@ local UIS = game:GetService("UserInputService")
 local SelectedFolder = nil
 local CycleKeybind = Enum.KeyCode.X
 
--- Caching functions for micro-optimization
-local os_clock = os.clock
-local math_max = math.max
-local table_find = table.find
-
 local URL = "https://raw.githubusercontent.com/artxficial/matchastuff/main/esp_utility.lua"
 local ImportESP = loadstring(game:HttpGet(URL))()
 
@@ -22,33 +17,6 @@ local UI_Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/ne
 
 local AnimationsLoggedCache = {}
 local AnimationsLoggedOrder = {}
-
-local ESPUtility = ImportESP or ESP_Utility
-local AnimationTrackerModule = ImportAnimationTracker or AnimationTracker
-
-if not UI_Library or not ESPUtility or not AnimationTrackerModule then
-    error("[AutoParry] A required dependency failed to initialize")
-end
-
-local Environment = (getgenv and getgenv()) or _G
-if Environment.__GAKURAN_AUTO_PARRY_CLEANUP then
-    pcall(Environment.__GAKURAN_AUTO_PARRY_CLEANUP)
-end
-
-local RuntimeConnections = {}
-
-local function TrackConnection(runtimeConnection)
-    if runtimeConnection then
-        table.insert(RuntimeConnections, runtimeConnection)
-    end
-    return runtimeConnection
-end
-
-local Traceback = (debug and debug.traceback) or function(err)
-    return tostring(err)
-end
-
-local ToggleDamageLogger
 
 
 -- ==========================================
@@ -69,18 +37,50 @@ local GameConfig = {
         },
         ["rbxassetid://130865087635587"] = {
             DisplayName = "3rdM1",
-            ReactionTime = 0.22,
+            ReactionTime = 0.15,
         },
         ["rbxassetid://86495068205420"] = {
             DisplayName = "4thM1",
-            ReactionTime = 0.22,
+            ReactionTime = 0.15,
         },
         ["rbxassetid://120393553812903"] = {
             DisplayName = "M2",
             ReactionTime = 0.3,
+            ForceParry = true,
         },
     },
-
+    ["AliAnims"] = {
+        ["rbxassetid://137247073345979"] = {
+            DisplayName = "1stM1",
+            ParryTime = 0.08,
+            ReactionTime = 0.12,
+        },
+        ["rbxassetid://102632933427597"] = {
+            DisplayName = "2ndM1",
+            ParryTime = 0.08,
+            ReactionTime = 0.17,
+        },
+        ["rbxassetid://119814294807778"] = {
+            DisplayName = "3rdM1",
+            ParryTime = 0.08,
+            ReactionTime = 0.21,
+        },
+        ["rbxassetid://74315946602284"] = {
+            DisplayName = "4thM1",
+            ParryTime = 0.08,
+            ReactionTime = 0.11,
+        },
+        ["rbxassetid://128315752013166"] = {
+            DisplayName = "M2",
+            ReactionTime = 0.3,
+            ForceParry = true,
+        },
+        ["rbxassetid://70642098724811"] = {
+            DisplayName = "M2Right",
+            ReactionTime = 0.3,
+            ForceParry = true,
+        },
+    },
     ["BasicAnims"] = {
         ["rbxassetid://83491849294956"] = {
             DisplayName = "1stM1"
@@ -97,37 +97,36 @@ local GameConfig = {
         ["rbxassetid://78888626472394"] = {
             DisplayName = "M2",
             ReactionTime = 0.3,
+            ForceParry = true,
         },
         ["M1Time"] = 0.14,
     },
     ["WrestlingAnims"] = {
         ["rbxassetid://91485623489753"] = {
             DisplayName = "4thM1",
-            ParryTime = 0.08,
         },
         ["rbxassetid://73748315742870"] = {
             DisplayName = "M2",
             ReactionTime = 0.3,
+            ForceParry = true,
         },
         ["rbxassetid://82903450925391"] = {
             DisplayName = "1stM1",
-            ParryTime = 0.08,
         },
         ["rbxassetid://119685134442395"] = {
             DisplayName = "2ndM1",
-            ParryTime = 0.08,
         },
         ["rbxassetid://107464726433388"] = {
             DisplayName = "3rdM1",
-            ParryTime = 0.08,
         },
-        ["M1Time"] = 0.11,
+        ["M1Time"] = 0.15,
 
     },
     ["MuayThaiAnims"] = {
         ["rbxassetid://137034747040618"] = {
             DisplayName = "M2",
             ReactionTime = 0.3,
+            ForceParry = true,
         },
         ["rbxassetid://74960202100098"] = {
             DisplayName = "4thM1",
@@ -151,60 +150,67 @@ local GameConfig = {
     ["BoxingAnims"] = {
         ["rbxassetid://137980914350618"] = {
             DisplayName = "1stM1",
-            ReactionTime = 0.12,
+            ReactionTime = 0.17,
         },
         ["rbxassetid://100408082509740"] = {
             DisplayName = "2ndM1",
-            ReactionTime = 0.12,
+            ReactionTime = 0.17,
         },
         ["rbxassetid://94803478352691"] = {
             DisplayName = "3rdM1",
-            ReactionTime = 0.15,
+            ReactionTime = 0.17,
             
         },
         ["rbxassetid://78695517680318"] = {
             DisplayName = "4thM1",
-            ReactionTime = 0.15,
+            ReactionTime = 0.17,
         },
         ["rbxassetid://132022052139564"] = {
             DisplayName = "M2",
+            ForceParry = true,
             ParryFunction = function(data)
-                if data.RegistryData.Processed == true then warn("no") return end 
+                if data.RegistryData.Processed == true then return end 
                 
                 data.RegistryData.Processed = true
                 task.spawn(function()
-                    print("Boxing parry")
+                    local random = math.random(1,10)
+
+                    task.wait(.4)
+                    BlockStart(os.clock(), 0.5)
                     task.wait(.3)
                     Dodge()
-                    task.wait(.35)
-                    BlockStart(os_clock(), 0.6)
                 end)
             end,
         },
     },
     ["HakariAnims"] = {
         ["rbxassetid://82855179231529"] = {
-            DisplayName = "MomentumM2"
+            DisplayName = "MomentumM2",
+            ParryTime = 0.08,
+            ReactionTime = 0.15,
+            ForceParry = true,
         },
-        ["rbxassetid://76236532060812"] = {
+        ["rbxassetid://92865171012109"] = {
             DisplayName = "1stM1",
             ReactionTime = 0.15,
         },
-        ["rbxassetid://74206130671324"] = {
+        ["rbxassetid://103026596903060"] = {
             DisplayName = "2ndM1",
             ReactionTime = 0.17,
         },
-        ["rbxassetid://71919935695307"] = {
+        ["rbxassetid://86626533783115"] = {
             DisplayName = "3rdM1",
             ReactionTime = 0.15,
         },
-        ["rbxassetid://122861547142657"] = {
+        ["rbxassetid://103100834246116"] = {
             DisplayName = "4thM1",
             ReactionTime = 0.21,
         },
-        ["rbxassetid://92851992709496"] = {
+        ["rbxassetid://103359839046574"] = {
             DisplayName = "M2",
-            ReactionTime = 0.35,
+            ParryTime = 0.08,
+            ReactionTime = 0.22,
+            ForceParry = true,
         },
     },
     ["CapoeiraAnims"] = {
@@ -249,102 +255,162 @@ local GameConfig = {
         ["rbxassetid://118943955490014"] = {
             DisplayName = "M2",
             ReactionTime = 0.65,
+            ForceParry = true,
         }
     },
     ["StrikerAnims"] = {
-        ["rbxassetid://127909081017342"] = {
-            DisplayName = "1stM1"
+        ["rbxassetid://116642061934550"] = {
+            DisplayName = "1stM1",
+            ReactionTime = 0.15,
         },
-        ["rbxassetid://79563637573277"] = {
-            DisplayName = "2ndM1"
+        ["rbxassetid://115234849770695"] = {
+            DisplayName = "2ndM1",
+            ReactionTime = 0.15,
         },
-        ["rbxassetid://118070233153900"] = {
-            DisplayName = "3rdM1"
+        ["rbxassetid://85554794950365"] = {
+            DisplayName = "3rdM1",
+            ReactionTime = 0.15,
         },
-        ["rbxassetid://77710266587706"] = {
-            DisplayName = "4thM1"
+        ["rbxassetid://73777821288331"] = {
+            DisplayName = "4thM1",
+            ReactionTime = 0.15,
         },
-        ["rbxassetid://114364673509520"] = {
-            DisplayName = "M2"
-        },
-        ["rbxassetid://132840225082238"] = {
-            DisplayName = "1stM1"
-        },
-        ["rbxassetid://88761422474765"] = {
-            DisplayName = "2ndM1"
-        },
-        ["rbxassetid://98462236639320"] = {
-            DisplayName = "3rdM1"
-        },
-        ["rbxassetid://122451562066756"] = {
-            DisplayName = "4thM1"
+        ["rbxassetid://99309341097380"] = {
+            DisplayName = "M2",
+            ReactionTime = 0.35,
+            ForceParry = true,
         }
+
     },
     ["KureAnims"] = {
         ["rbxassetid://71676634048602"] = {
-            DisplayName = "4thM1"
+            DisplayName = "4thM1",
+            ParryTime = 0.08,
+            ReactionTime = 0.16
         },
         ["rbxassetid://102407060635393"] = {
-            DisplayName = "M2",
-            ["ReactionTime"] = 0.01,
+            DisplayName = "Ook",
+            ["ReactionTime"] = 0.1,
         },
         ["rbxassetid://82904229252991"] = {
-            DisplayName = "1stM1"
+            DisplayName = "1stM1",
+            ParryTime = 0.08,
+            ReactionTime = 0.16
         },
         ["rbxassetid://103732110215321"] = {
-            DisplayName = "2ndM1"
+            DisplayName = "2ndM1",
+            ParryTime = 0.08,
+            ReactionTime = 0.16
         },
         ["rbxassetid://103964436023727"] = {
-            DisplayName = "3rdM1"
+            DisplayName = "3rdM1",
+            ParryTime = 0.08,
+            ReactionTime = 0.16
+        },
+    },
+    ["WingChun"] = {
+        ["rbxassetid://81810173569294"] = {
+            DisplayName = "4thM1",
+            ReactionTime = 0.52
+        },
+        ["rbxassetid://82196924299426"] = {
+            DisplayName = "M2",
+            ["ReactionTime"] = 0.06,
+            ForceParry = true,
+        },
+        ["rbxassetid://71178147313608"] = {
+            DisplayName = "1stM1",
+            ReactionTime = 0.16
+        },
+        ["rbxassetid://117898175201201"] = {
+            DisplayName = "2ndM1",
+            ReactionTime = 0.16
+        },
+        ["rbxassetid://121315597867666"] = {
+            DisplayName = "3rdM1",
+            ReactionTime = 0.16
         },
     },
     ["HakariOtherAnims"] = {
         ["rbxassetid://126612786608030"] = {
-            DisplayName = "1stM1"
+            DisplayName = "1stM1",
+            ReactionTime = 0.15,
         },
         ["rbxassetid://113719263885794"] = {
-            DisplayName = "2ndM1"
+            DisplayName = "2ndM1",
+            ReactionTime = 0.15,
         },
         ["rbxassetid://136305578634960"] = {
-            DisplayName = "3rdM1"
+            DisplayName = "3rdM1",
+            ReactionTime = 0.15,
         },
         ["rbxassetid://89039586375625"] = {
-            DisplayName = "4thM1"
+            DisplayName = "4thM1",
+            ReactionTime = 0.15,
         },
         ["rbxassetid://82855179231529"] = {
-            DisplayName = "MomentumM2"
+            DisplayName = "MomentumM2",
+            ParryTime = 0.08,
+            ReactionTime = 0.15,
+            ForceParry = true,
         },
         ["rbxassetid://101619248052969"] = {
-            DisplayName = "M2"
+            DisplayName = "M2",
+            ParryTime = 0.08,
+            ReactionTime = 0.15,
+            ForceParry = true,
+        },
+    },
+    ["Debug"] = {
+        ["http://www.roblox.com/asset/?id=125750702"] = {
+            DisplayName = "M1",
+            ReactionTime = 0.3,
         },
     },
 }
 
 local IgnoreIds = {
-73766443218740,111699625251889,85823794654077,83600639547203,99661732639863,106268941365574,109816855387997,122561749929324,129805948180599,
-90752347516770,135133599113049,132695091086148,137015026151472,114511731321756,122541287927198,80309578200579,100794890036133,109303037515668,117293898907979,74690341409113,73090768467054,72284079162560,92787945841620,89016181362524,
-76945839486275,101161965631044,80135556847061,128307941333158,85931837451298,91352556581859, 104407197874289,77911299793653,129335968179665, 122384188141033,
+73766443218740,111699625251889,85823794654077,99661732639863,106268941365574,109816855387997,122561749929324,129805948180599,
+90752347516770,135133599113049,132695091086148,137015026151472,114511731321756,100794890036133,109303037515668,117293898907979,74690341409113,73090768467054,72284079162560,89016181362524,
+76945839486275,101161965631044,128307941333158,85931837451298,91352556581859,77911299793653,129335968179665, 122384188141033,
 132695766056641,113331696487725,124220338099067,99799500309776,108636808436488,90015977935891,87932588807124,132477488202815,102982320608759,109278619250401,79971841883936,97783129267001,72822821848529,79974955602012,77798715679680,85845666927963,108862846290180,108045962864902,93184693099565,120399899079666,99958962160522,
 }
-
 
 local ParriedAnimation = {"rbxassetid://100773926241456", "rbxassetid://102823909334302", "rbxassetid://96304721384743", "rbxassetid://82979105739696", "rbxassetid://96600699015093",
 "rbxassetid://138519505081692",
 }
--- 5645212799 blocking anim
+local StunnedAnimation = {"rbxassetid://122541287927198", "rbxassetid://83600639547203", "rbxassetid://80309578200579", "rbxassetid://92787945841620", "rbxassetid://108045962864902", "rbxassetid://104407197874289"}
+local ParryingAnimation = {"rbxassetid://118147060185189", "rbxassetid://80135556847061", "rbxassetid://88718564310179"}
+local ParryFailed = {"rbxassetid://4210597123"}
 
-local StunnedAnimation = {"rbxassetid://9598562590", "rbxassetid://9598537410", "rbxassetid://9598551746"}
-local ParryingAnimation = {"rbxassetid://118147060185189"}
-local ParryFailed = {"rbxassetid://4210597123"} -- BlockHit
+local IgnoreIdLookup = {}
+local ParriedAnimationLookup = {}
+local StunnedAnimationLookup = {}
+local ParryingAnimationLookup = {}
 
+for _, id in ipairs(IgnoreIds) do
+    IgnoreIdLookup[id] = true
+end
+
+for _, id in ipairs(ParriedAnimation) do
+    ParriedAnimationLookup[id] = true
+end
+
+for _, id in ipairs(StunnedAnimation) do
+    StunnedAnimationLookup[id] = true
+end
+
+for _, id in ipairs(ParryingAnimation) do
+    ParryingAnimationLookup[id] = true
+end
 
 local AutoParryRange = 10
 local MaxCycleRange = 20
-local ParryWindow = 0.06
+local ParryWindow = 0.2
 local ProbabilityToParry = 100
 local DefaultReactionTime = 0.1
 local ParryOffset = 0
-local BlockHoldTime = 0.4
+local BlockHoldTime = 0.27
 
 
 -- ==========================================
@@ -414,7 +480,6 @@ local function SetClipboardLoggedCache()
 
     local ids = {}
     for i = 1, totalItems do
-        -- Extract only the numbers from the asset ID string
         local numericId = tostring(AnimationsLoggedOrder[i]):match("%d+")
         if numericId then
             table.insert(ids, numericId)
@@ -442,6 +507,7 @@ local function SetClipboardIgnoreList()
         
         if numericId then
             table.insert(IgnoreIds, numericId)
+            IgnoreIdLookup[numericId] = true
             
             table.insert(newlyAddedIds, tostring(numericId))
         end
@@ -465,7 +531,6 @@ local function AnimationGrabber(Folder)
             if Animation.Name:find("M1") or Animation.Name:find("M2") then 
                 local AnimationIdPointer = memory_read("uintptr_t", Animation.Address + 192)
                 local AnimationId = memory_read("string", AnimationIdPointer) or ""
-                -- Format the individual animation entry
                 local animString = string.format('      ["%s"] = {\n          DisplayName = "%s"\n      }', AnimationId, Animation.Name)
                 table.insert(styleAnimations, animString)
             end 
@@ -484,7 +549,6 @@ local function AnimationGrabber(Folder)
     setclipboard(Output)
     print(Output)
 end
---AnimationGrabber(game.ReplicatedStorage.Animations.Combat)
 
 local function LiteGrabber(Folder)
     local OutputLines = {}
@@ -499,10 +563,9 @@ local function LiteGrabber(Folder)
     setclipboard(Output)
     print(Output)
 end
---LiteGrabber(game.ReplicatedStorage.Assets.Anims.Weapon.Spear)
 
 local function UpdateSliders(OldReactionTime)
-    for animationId, Info in pairs(GameConfig) do 
+    for animationId, Info in (GameConfig) do 
         if AnimationIdSliders[animationId] then
             Info.DefaultReactionTime = DefaultReactionTime
             local ReactionTime = Info.M1Time or Info.ReactionTime or Info.DefaultReactionTime
@@ -515,93 +578,266 @@ local scheduler = {}
 local pendingTasks = {}
 
 function scheduler.delay(delayTime, callback)
-    table.insert(pendingTasks, {
-        executeAt = os_clock() + delayTime,
+    pendingTasks[#pendingTasks + 1] = {
+        executeAt = os.clock() + delayTime,
         callback = callback
-    })
+    }
 end
 
 function scheduler.update()
-    local now = os_clock()
+    local now = os.clock()
     for i = #pendingTasks, 1, -1 do
-        local task = pendingTasks[i]
-        if now >= task.executeAt then
-            table.remove(pendingTasks, i)
-
-            task.spawn(function()
-                local ok, callbackError = xpcall(task.callback, Traceback)
-                if not ok then
-                    warn("[Scheduler] " .. tostring(callbackError))
-                end
-            end)
+        local pendingTask = pendingTasks[i]
+        if now >= pendingTask.executeAt then
+            pendingTasks[i] = pendingTasks[#pendingTasks]
+            pendingTasks[#pendingTasks] = nil
+            task.spawn(pendingTask.callback)
         end
     end
 end
 
--- ==========================================
-
--- ==========================================
-
-
+-- ==========================================================
+-- UI WINDOW & TAB INITIALIZATION
+-- ==========================================================
 local UI_Window = UI_Library:CreateWindow({ 
     title = "Auto Parry Builder", 
     size = Vector2.new(700, 580),
     configFolder = "auto_parry_builder",
- })
+})
 
 local AP_Tab = UI_Window:Tab("Auto Parry", "swords")
 local Config_Tab = UI_Window:Tab("Style Configurations", "swords")
 
-local Files_Section = AP_Tab:Section("Files", "Left")
-local Config_Section = AP_Tab:Section("Global Configuration", "Left")
-local AP_Section = AP_Tab:Section("Settings", "Right")
-local Folders_Section = AP_Tab:Section("Folders", "Right")
+local Files_Section     = AP_Tab:Section("Files", "Left")
+local AutoplaySection     = AP_Tab:Section("Autoplay", "Left")
+local Config_Section    = AP_Tab:Section("Global Configuration", "Left")
 local ClipboardSection = AP_Tab:Section("Logging", "Left")
 
-local TargetPool_Text = Folders_Section:Label("NO TARGETS FOUND") 
+local AP_Section        = AP_Tab:Section("Settings", "Right")
+local Folders_Section   = AP_Tab:Section("Folders", "Right")
 
-local Hint = AP_Section:Label("You have to press X in order to target someone or turn on Auto Target Nearest")
-local AutoParryToggle = AP_Section:Toggle("Auto Parry", true):AddKeybind("g", "Toggle")
-local AutoDodgeToggle = AP_Section:Toggle("Auto Dodge", true)
+-- ==========================================================
+-- STATE & UI ELEMENT REFERENCES
+-- ==========================================================
+local TargetPool_Text
+local LoggedText, IgnoredText
 
-local ParryDebugToggle = Config_Section:Toggle("Debug Parry", false)
+local AutoParryToggle, AutoDodgeToggle
+local AutoTargetNearest, MultiTarget
+local TargetFacingYou, YouFacingTarget
+local ParryDebugToggle
+local PingCompensateToggle
+local AutoPlayToggle
+local HeightToggle
 
-local AutoTargetNearest = AP_Section:Toggle("Auto Target Nearest", false)
-local MuliTarget = AP_Section:Toggle("Multiple Targets", true)
-
-local TargetFacingYou = nil
-local YouFacingTarget = nil
-
-local LoggedText = ClipboardSection:Label("Logged Ids: ?")
-local IgnoredText = ClipboardSection:Label("Ignored Ids: ?")
-
-local function UpdateTargetPoolSection(Tab)
+-- ==========================================================
+-- HELPER FUNCTIONS
+-- ==========================================================
+local function UpdateTargetPoolSection()
     local characters = GetAllCharactersInFolder() 
     local names = {}
     
     for i, character in ipairs(characters) do
         table.insert(names, character.Name)
-
-        if i == 10 then table.insert(names, "... (too long)") break end 
+        if i == 10 then 
+            table.insert(names, "... (too long)") 
+            break 
+        end 
     end
 
-    local poolString = table.concat(names, ", ")
-    TargetPool_Text:SetText("Target Pool: ".. poolString)
+    local poolString = #names > 0 and table.concat(names, ", ") or "NO TARGETS FOUND"
+    TargetPool_Text:SetText("Target Pool: " .. poolString)
 end
 
 local function UpdateClipboardSection()
-    local IgnoredIdsCount = #IgnoreIds
-    local AnimationsLoggedCount = 0 
-
-    for i, v in pairs(AnimationsLoggedCache) do  
-        AnimationsLoggedCount += 1
+    local animationsLoggedCount = 0 
+    for _ in pairs(AnimationsLoggedCache or {}) do  
+        animationsLoggedCount += 1
     end
 
-    LoggedText:SetText("Logged Ids: ".. AnimationsLoggedCount)
-    IgnoredText:SetText("Ignored Ids: ".. #IgnoreIds)
+    LoggedText:SetText("Logged Ids: " .. animationsLoggedCount)
+    IgnoredText:SetText("Ignored Ids: " .. #(IgnoreIds or {}))
+end
+
+
+-- ==========================================================
+local Receptors = {
+    ["Receptor1"] = "X",
+    ["Receptor2"] = "C",
+    ["Receptor3"] = "N",
+    ["Receptor4"] = "M",
+}
+
+local HeldKeys = {}
+
+local Threshold = 30
+local LastCacheTime = 0
+local ReceptorXMap = {}
+
+local function AutoPlayTask()
+    if not AutoPlayToggle.Get() then return end
+
+    local RhythmServiceUI = game.Players.LocalPlayer.PlayerGui:FindFirstChild("RhythmServiceUI")
+    if not RhythmServiceUI then return end
+
+    local RhythmRoot = RhythmServiceUI.RhythmRoot
+
+    local ReceptorLookup = RhythmRoot.Receptors
+    local Receptor1Y = ReceptorLookup.Receptor1.AbsolutePosition.Y
+    local ReceptorCount = 0 
+
+    local now = os.clock()
+    if now - LastCacheTime >= 1 then
+        for ReceptorName, Key in Receptors do
+            local Receptor = ReceptorLookup[ReceptorName]
+            if not Receptor then continue end 
+            ReceptorCount += 1
+            local ReceptorX = math.floor(Receptor.AbsolutePosition.X + Receptor.AbsoluteSize.X / 2)
+            ReceptorXMap[ReceptorX] = {ReceptorName = ReceptorName, Key = Key, Receptor = Receptor}
+        end
+        if ReceptorCount == 2 then  
+            Receptors["Receptor1"] = "F"
+            Receptors["Receptor2"] = "J"
+        else
+            Receptors["Receptor1"] = "X"
+            Receptors["Receptor2"] = "C"
+        end
+
+        LastCacheTime = now
+    end
+
+   for _, FallingNote in RhythmRoot.Lanes:GetChildren() do 
+    if FallingNote.Name ~= "NoteTemplate" then continue end 
+    local NotePos = FallingNote.AbsolutePosition
+    local NoteSize = FallingNote.AbsoluteSize
+    local NoteX = math.floor(NotePos.X + NoteSize.X / 2)
+
+    local Match
+    for RX, Data in ReceptorXMap do
+        if math.abs(NoteX - RX) <= 10 then
+            Match = Data
+            break
+        end
+    end
+
+    if not Match then continue end 
+
+    local Tail = FallingNote.Tail
+    local TailSize = Tail and Tail.AbsoluteSize
+    local HasTail = TailSize and TailSize.Y > 0
+
+    local Receptor = Match.Receptor
+    local ReceptorPos = Receptor.AbsolutePosition
+    local ReceptorName = Match.ReceptorName
+    local Key = Match.Key
+
+
+    if HasTail then
+        local WhenYouShouldHold = (Tail.AbsolutePosition.Y + Tail.AbsoluteSize.Y) - ReceptorPos.Y
+
+        if WhenYouShouldHold + 15 > Threshold then
+            if not HeldKeys[ReceptorName] then
+                HeldKeys[ReceptorName] = FallingNote.Address
+                keypress(string.byte(Key))
+            elseif HeldKeys[ReceptorName] ~= FallingNote.Address then
+                HeldKeys[ReceptorName] = FallingNote.Address
+                keypress(string.byte(Key))
+            end
+        end
+
+        if FallingNote.Address == HeldKeys[ReceptorName] then
+            if (Tail.AbsolutePosition.Y - ReceptorPos.Y) > 0 then
+                scheduler.delay(0.01, function()
+                    HeldKeys[ReceptorName] = nil                    
+                end)
+                keyrelease(string.byte(Key))
+            end
+        end
+    else
+        if math.abs(NotePos.Y - ReceptorPos.Y) < Threshold then
+            if HeldKeys[ReceptorName] then
+                keyrelease(string.byte(Key))
+                HeldKeys[ReceptorName] = nil
+            end
+            
+            task.spawn(function()                
+                keypress(string.byte(Key))
+                task.wait(0.05)
+                keyrelease(string.byte(Key))
+            end)
+        end
+    end
+end
+end
+
+-- ==========================================================
+-- SECTION BUILDERS
+-- ==========================================================
+
+local function CreateAutoPlaySection()
+    AutoPlayToggle = AutoplaySection:Toggle("Auto Play", true)
+end
+
+local function CreateAPSection()
+    AP_Section:Label("You have to press X in order to target someone or turn on Auto Target Nearest")
+    
+    AutoParryToggle = AP_Section:Toggle("Auto Parry", true):AddKeybind("g", "Toggle")
+    AutoDodgeToggle = AP_Section:Toggle("Auto Dodge", true)
+    AutoTargetNearest = AP_Section:Toggle("Auto Target Nearest", false)
+    MultiTarget = AP_Section:Toggle("Multiple Targets", true)
+    HeightToggle = AP_Section:Toggle("Height Multiplier (May crash some users)", true)
+    
+
+    AP_Section:Divider("Conditions")
+
+    TargetFacingYou = AP_Section:Toggle("Target facing you", false)
+    YouFacingTarget = AP_Section:Toggle("You facing target", true)
+end
+
+local function CreateGlobalConfigSection()
+    ParryDebugToggle = Config_Section:Toggle("Debug Parry", false)
+
+    local Range = Config_Section:Slider("Auto Parry Range", 40, 1, 7, 80, "", function(v)
+        AutoParryRange = v
+    end)
+    Range:Set(AutoParryRange)
+
+    local Probability = Config_Section:Slider("Probability To Parry", 100, 1, 1, 100, "%", function(v)
+        ProbabilityToParry = v
+    end)
+    Probability:Set(ProbabilityToParry)
+
+    local DefaultSection = Config_Tab:Section("Default Configuration", "Left")
+    
+    local Offset = DefaultSection:Slider("Parry offset", 0, 0.01, -0.1, 0.1, "s", function(v)
+        ParryOffset = v
+    end)
+    Offset:Set(ParryOffset)
+
+    DefaultSection:Label("Positive moves window forward (parry later), Negative moves it backward (parry earlier)")    
+
+    local Time = DefaultSection:Slider("Default Reaction Time", 0.3, 0.01, 0, 1, "", function(v)
+        DefaultReactionTime = v
+        UpdateSliders()
+    end)
+    Time:Set(DefaultReactionTime)
+    DefaultSection:Label("Reaction time is the time you press F from the moment the animation starts playing. It does not account for ping")
+
+    PingCompensateToggle = DefaultSection:Toggle("Ping Compensation", true)
+    DefaultSection:Label("Subtracts half of your ping value from the start time of ur reaction time. May improve performance.")
+    
+    DefaultSection:Divider("Window")
+    
+    local Window = DefaultSection:Slider("Default Parry Window", 0.3, 0.01, 0, 1, "", function(v)
+        ParryWindow = v
+    end)
+    Window:Set(ParryWindow)
+    DefaultSection:Label("This is usually constant, don't change this.")
 end
 
 local function CreateFoldersSection()
+    TargetPool_Text = Folders_Section:Label("Target Pool: NO TARGETS FOUND") 
+
     local folders = GetAllFoldersInWorkspace()
 
     local Range = Folders_Section:Slider("Max Cycle Range", 10, 1, 7, 50, "", function(v)
@@ -609,16 +845,14 @@ local function CreateFoldersSection()
     end)
     Range:Set(MaxCycleRange)
 
-
-    local IncludeLocalCharacterToggle = Folders_Section:Toggle("Include Local Character", false, function(on)
+    Folders_Section:Toggle("Include Local Character", false, function(on)
         IncludeLocalCharacter = on
         UpdateTargetPoolSection()   
     end)
 
     local FolderCombo = Folders_Section:Dropdown("Live Folder", nil, folders, false, function(list)
-        local Selected = list[1]
-        SelectedFolder = Selected
-        UpdateTargetPoolSection(Tab)
+        SelectedFolder = list[1]
+        UpdateTargetPoolSection()
     end)
 
     if game.Workspace:FindFirstChild("Players") then  
@@ -630,91 +864,10 @@ local function CreateFoldersSection()
     print("[UI] Folders Section Created")
 end
 
-local function CreateGroupSliders()
-    local GroupedStyles = {}
-    
-    for animationId, Info in pairs(GameConfig) do  
-        local StyleName = Info.Style
-    --   if Info.DisplayName == "M2" or not StyleName or not Info.M1Time then continue end 
-
-        if not GroupedStyles[StyleName] then
-            GroupedStyles[StyleName] = {}
-        end
-        
-        GroupedStyles[StyleName][animationId] = Info
-    end
-
-    local Number = 1
-    for StyleName, Animations in pairs(GroupedStyles) do
-        local Side = (Number % 2 == 1) and "Left" or "Right"
-        local StyleSection = Config_Tab:Section(StyleName, Side)
-        
-        for animationId, Info in pairs(Animations) do
-            local nameLabel = Info.DisplayName or tostring(animationId)
-            if Info["ParryFunction"] then  
-                StyleSection:Label("Slider not possible for ".. nameLabel .. " since it uses a function" )
-                continue
-            end
-            
-            
-            AnimationIdSliders[animationId] = StyleSection:Slider("Reaction Time: " .. nameLabel, 0, 0.01, 0, 1, "", function(v)
-                if v ~= DefaultReactionTime then
-                    Info.ReactionTime = v                    
-                end
-            end)
-            
-            AnimationIdSliders[animationId]:Set(Info.M1Time or Info.ReactionTime or DefaultReactionTime)
-        end
-        
-        Number += 1
-    end
-end
-
-local function CreateAPSection()
-
-    AP_Section:Divider("Conditions")
-
-    TargetFacingYou = AP_Section:Toggle("Target facing you", false)
-    YouFacingTarget = AP_Section:Toggle("You facing target", true)
-    
-    local Offset = Config_Section:Slider("Parry offset", 0, 0.01, -0.1, 0.1, "s",function(v)
-        ParryOffset = v
-    end)
-    Offset:Set(ParryOffset)
-    Config_Section:Label("Positive moves window forward making you parry later, Negative moves it backwards making you parry earlier")    
-    
-    local Range = Config_Section:Slider("Auto Parry Range", 40, 1, 7, 80, "", function(v)
-        AutoParryRange = v
-    end)
-    Range:Set(AutoParryRange)
-
-    local Probability = Config_Section:Slider("Probability To Parry", 100, 1, 1, 100, "%", function(v)
-        ProbabilityToParry = v
-    end)
-    Probability:Set(ProbabilityToParry)
-
-    local DefaultSection = Config_Tab:Section("Default Configuration", "left")
-    
-    local Time = DefaultSection:Slider("Default Reaction Time", 0.3, 0.01, 0, 1, "", function(v)
-        DefaultReactionTime = v
-        UpdateSliders()
-    end)
-    Time:Set(DefaultReactionTime)
-    DefaultSection:Label("Reaction time is the time you press F from the moment the animation starts playing. It does not account for ping")
-
-    DefaultSection:Divider("Window")
-    
-    local Window = DefaultSection:Slider("Default Parry Window", 0.3, 0.01, 0, 1, "", function(v)
-        ParryWindow = v
-        --ReleaseTime = ParryWindow/2
-    end)
-    Window:Set(ParryWindow)
-    DefaultSection:Label("This is usually constant, don't change this.")
-    
-end
-
 local function CreateClipboardSection()
-    -- 1. Define the UI element configurations in a clean list
+    LoggedText = ClipboardSection:Label("Logged Ids: ?")
+    IgnoredText = ClipboardSection:Label("Ignored Ids: ?")
+
     local elements = {
         {
             Type = "Toggle",
@@ -728,8 +881,8 @@ local function CreateClipboardSection()
             Type = "Toggle",
             Name = "Add unknowns to ignore and copy ignore list",
             Default = false,
-            Keybind = "v", -- Just define the keybind right here!
-            Callback = function(on, self) 
+            Keybind = "v",
+            Callback = function(on, instance) 
                 SetClipboardIgnoreList()
                 AnimationsLoggedCache = {}
                 AnimationsLoggedOrder = {}
@@ -756,7 +909,6 @@ local function CreateClipboardSection()
         }
     }
 
-    -- 2. Loop through the list and dynamically construct the UI
     for _, config in ipairs(elements) do
         local instance
 
@@ -783,88 +935,148 @@ local function CreateClipboardSection()
 end
 
 local function CreateFilesSection()
+    Files_Section:Info("Game: " .. tostring(GameName))
 
-    Files_Section:Info("Game: "..GameName)
-
-    local Load = Files_Section:Button("Load Configuration", function()
-        local configData = UI_Library:LoadConfig(GameName)
+    Files_Section:Button("Load Configuration", function()
+        UI_Library:LoadConfig(GameName)
         UI_Library:Notify("Success", "Loaded configuration")
     end)
 
-    local Save = Files_Section:Button("Save Configuration", function()
+    Files_Section:Button("Save Configuration", function()
         UI_Library:SaveConfig(GameName)
         UI_Library:Notify("Success", "Saved configuration")
     end)
 end
 
-CreateFoldersSection()
-CreateAPSection()
-CreateGroupSliders()
-CreateFilesSection()
+local function CreateGroupSliders()
+    local GroupedStyles = {}
+    
+    for animationId, Info in pairs(GameConfig or {}) do  
+        local StyleName = Info.Style or "Unknown"
+
+        if not GroupedStyles[StyleName] then
+            GroupedStyles[StyleName] = {}
+        end
+        
+        GroupedStyles[StyleName][animationId] = Info
+    end
+
+    local counter = 1
+    for StyleName, Animations in pairs(GroupedStyles) do
+        local Side = (counter % 2 == 1) and "Left" or "Right"
+        local StyleSection = Config_Tab:Section(StyleName, Side)
+        
+        for animationId, Info in pairs(Animations) do
+            local nameLabel = Info.DisplayName or tostring(animationId)
+            
+            if Info["ParryFunction"] then  
+                StyleSection:Label("Slider not possible for " .. nameLabel .. " (uses function)")
+                continue
+            end
+            
+            AnimationIdSliders[animationId] = StyleSection:Slider("Reaction Time: " .. nameLabel, 0, 0.01, 0, 1, "", function(v)
+                if v ~= DefaultReactionTime then
+                    Info.ReactionTime = v                    
+                end
+            end)
+            
+            AnimationIdSliders[animationId]:Set(Info.M1Time or Info.ReactionTime or DefaultReactionTime)
+        end
+        
+        counter += 1
+    end
+end
+
+-- ==========================================================
+-- UI INITIALIZATION
+-- ==========================================================
+local function InitializeUI()
+    CreateAutoPlaySection()
+    CreateAPSection()
+    CreateGlobalConfigSection()
+    CreateFoldersSection()
+    CreateClipboardSection()
+    CreateFilesSection()
+    CreateGroupSliders()
+end
+
+InitializeUI()
 
 UpdateClipboardSection()
-CreateClipboardSection()
 
 -- ==========================================
-local PARRY_DISTANCE = 15
-local ORB_TRIGGER_COOLDOWN = 0.10
-local lastOrbParryAt = 0
+local PARRY_DISTANCE = 15 
+local PARRY_COOLDOWN = 0.1
+
+local activeOrbs = {}
+local lastParryAt = 0
 
 local function GetLocalHRP()
-    local localCharacter = LocalPlayer.Character
-    return localCharacter and localCharacter:FindFirstChild("HumanoidRootPart") or nil
+    local localChar = LocalPlayer.Character
+    local HRP = localChar:FindFirstChild("HumanoidRootPart")
+    if not HRP then return nil end 
+    return HRP
 end
 
-function checkRange(studs, origin)
-    local localRoot = GetLocalHRP()
-    return localRoot ~= nil
-        and origin ~= nil
-        and (localRoot.Position - origin.Position).Magnitude < studs
+function checkRange(Studs, Origin : Part)
+    local HRP = GetLocalHRP()
+
+    if (HRP.Position - Origin.Position).Magnitude < Studs then  
+        return true 
+    else
+        return false 
+    end
 end
 
-local ActiveOrbs = {}
+local orbSpawnTimes = {} 
 
 local function ListenForOrbs()
-    print("[Orb] Optimized listener active")
-    local thrownFolder = game.Workspace:WaitForChild("Thrown", 5)
-    if not thrownFolder then return end
+    print("Listening for orbs")
 
-    -- Lọc vật thể khi chúng vừa sinh ra
-    TrackConnection(thrownFolder.ChildAdded:Connect(function(child)
-        if child:IsA("BasePart") and (child.Name == "ArdourBall2" or child.Name == "ArdourBall") then
-            ActiveOrbs[child] = true
-        end
-    end))
+    local connection
+    
+    connection = RunService.Heartbeat:Connect(function()
+        local character = LocalPlayer.Character
+        local hrp = character and character:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+        
+        local myPosition = hrp.Position
+        local ActiveOrbs = {}
 
-    TrackConnection(thrownFolder.ChildRemoved:Connect(function(child)
-        if ActiveOrbs[child] then
-            ActiveOrbs[child] = nil
-        end
-    end))
-
-    return TrackConnection(RunService.Heartbeat:Connect(function()
-        if not AutoParryToggle.Get() then
-            return
-        end
-
-        local now = os_clock()
-        if now - lastOrbParryAt < ORB_TRIGGER_COOLDOWN then
-            return
-        end
-
-        local localRoot = GetLocalHRP()
-        if not localRoot then return end
-
-        local localPos = localRoot.Position
-        for orb, _ in pairs(ActiveOrbs) do
-            if orb.Parent and (localPos - orb.Position).Magnitude <= PARRY_DISTANCE then
-                if BlockStart(now, 0.10) then
-                    lastOrbParryAt = now
+        local thrownFolder = game.Workspace:FindFirstChild("Thrown")
+        if thrownFolder then
+            for _, v in ipairs(thrownFolder:GetChildren()) do  
+                if (v.Name == "ArdourBall2" or v.Name == "ArdourBall") 
+                    and v:IsA("BasePart") 
+                    and v:IsDescendantOf(game.Workspace.Thrown) then
+                    
+                    table.insert(ActiveOrbs, v)
                 end
-                break
             end
         end
-    end))
+
+        for i = #ActiveOrbs, 1, -1 do
+            local orb = ActiveOrbs[i]
+
+            if orb and orb.Parent then
+                local distance = (myPosition - orb.Position).Magnitude
+
+                if distance <= PARRY_DISTANCE and (tick() - lastParryAt >= 0.08) then
+                    lastParryAt = tick()
+                    
+                    BlockStart(os.clock(), 0.08)
+                    
+                    break 
+                end
+            end
+        end
+    end)
+    
+    return connection
+end
+
+if game.PlaceId == 8668476218 or game.PlaceId == 134572803901609 then  
+    local orbListener = ListenForOrbs()    
 end
 
 -- ==========================================
@@ -875,237 +1087,254 @@ local ParryKey = string.byte("F")
 local DodgeKey = string.byte("Q")
 
 local KeyHeld = false
-local ReleaseDeadline = 0
-local LastBlockInputAt = 0
-local MIN_INPUT_INTERVAL = 0.04
+local ParryKeyPressed = false
+local TriggerParry = false
 
 local Stunned = false
+local currentStunToken = 0
 
-local AnimationTracker = AnimationTrackerModule.new(IgnoreIds)
-local LocalTracker = AnimationTrackerModule.new(IgnoreIds)
+local AnimationTracker = AnimationTracker.new(IgnoreIds)
+local LocalTracker = AnimationTracker.new(IgnoreIds)
 
+local DamageLogs = false
 local IncludeLocalCharacter = false
 
+local lastAnimationCheck = 0
 local connection = nil
 local previousHealth = 100
 local lastCharacter = nil
 
+local SelectAllMode = true 
 local TargetCharacters = {}
 local EspTrackers = {} 
 
+local PendingReactionTimestamp = nil 
+local EspTracker = nil
 local CurrentIndex = 1
 local COLOR_WHITE = Color3.fromRGB(255, 255, 255)
 local COLOR_RED = Color3.fromRGB(255, 50, 50)
 local COLOR_GREEN = Color3.fromRGB(50, 255, 50)
 
--- Keep target selection and animation checks active, but render no ESP on bodies.
-local SHOW_TARGET_ESP = false
-
 local AnimationRegistry = {}
 local LastPendingRegData = nil
+local CurrentActiveAnimationIds = {}
+local ActiveAnimationsThisFrame = {}
+local EmptyAnimations = {}
+local BestParryRegData = nil
+local BestParryAttackConfig = nil
+local BestParryExpire = math.huge
+
+local CachedPingSeconds = 0
+local LastPingSampleTime = -math.huge
+local PingSampleInterval = 0.2
+local PingSmoothingAlpha = 0.35
+local SmoothedFrameDelta = 1 / 60
+local FrameLeadCompensation = SmoothedFrameDelta * 0.5
+local InputRegisteredTime = nil
+local TimeBetweenPressingFandParrying = nil
+
 local InputRegisteredTime = nil
 local ParryRegisteredTime = nil
-local InputLatency = 0 -- (Parry - Input)
-
-local OnInputF
+local InputLatency = 0 
 
 
 local ParryState = {
     IDLE = "idle",
 
-    INPUT_PENDING = "input_pending",   -- F was pressed locally, waiting for animation to appear
-    PARRYING = "parrying",             -- Animation just appeared
-    PARRYINGFAILED = "parryingfailed",       -- Animation didn't appear (Happens when you're on parry cooldown)
+    INPUT_PENDING = "input_pending",   
+    PARRYING = "parrying",             
+    PARRYINGFAILED = "parryingfailed", 
 
     STUNNED = "stunned",
-    WINDOW_EXCEEDED = "window_exceeded", -- If you exceed the window cuz ur not targeting or ur
+    WINDOW_EXCEEDED = "window_exceeded", 
 
-    SUCCESS = "parrysuccess"       -- Parrying animation was detected so its parrying right now
+    SUCCESS = "parrysuccess"       
 }
 
 local CurrentParryState = ParryState.IDLE
--- ==========================================
--- Helpers
--- ==========================================
 
-ToggleDamageLogger = function(state)
-    if not state then
-        if connection then
-            connection:Disconnect()
-            connection = nil
-        end
-        print("[Logger] Heartbeat damage logger DISABLED.")
-        return
-    end
-
-    if connection then
-        return
-    end
-
-    print("[Logger] Heartbeat damage logger ACTIVE.")
-
-    connection = TrackConnection(RunService.Heartbeat:Connect(function()
-        local character = LocalPlayer.Character
-        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-        if not humanoid then
-            return
-        end
-
-        if character ~= lastCharacter then
-            lastCharacter = character
-            previousHealth = humanoid.Health
-            return
-        end
-
-        local currentHealth = humanoid.Health
-        if currentHealth < previousHealth and #TargetCharacters > 0 then
-            local damageTaken = previousHealth - currentHealth
-
-            for _, targetCharacter in ipairs(TargetCharacters) do
-                local activeAnimations = AnimationTracker:Update(targetCharacter) or {}
-
-                for _, anim in ipairs(activeAnimations) do
-                    local timePosition = anim.TimePosition or 0
-                    if anim.AnimationId and timePosition >= 0.1 and timePosition <= 0.7 then
-                        local assetId = tostring(anim.AnimationId)
-                        local poolData = GameConfig[assetId]
-
-                        warn(string.format(
-                            "[HIT] %.1f DMG | Anim: %s (%s) %s | Frame Time: %.3f",
-                            damageTaken,
-                            poolData and poolData.DisplayName or anim.Name or "Unknown",
-                            assetId,
-                            poolData and poolData.Style or "",
-                            timePosition
-                        ))
-                    end
-                end
-            end
-        end
-
-        previousHealth = currentHealth
-    end))
+local function IsParryDebugEnabled()
+    return ParryDebugToggle and ParryDebugToggle.Get()
 end
 
--- ==========================================
--- Parry Core Logic
--- ==========================================
+local function UpdateTimingCache(now, deltaTime)
+    if deltaTime and deltaTime > 0 and deltaTime < 0.1 then
+        SmoothedFrameDelta += (deltaTime - SmoothedFrameDelta) * 0.15
+        FrameLeadCompensation = math.min(SmoothedFrameDelta * 0.5, 0.012)
+    end
 
+    if now - LastPingSampleTime >= PingSampleInterval then
+        LastPingSampleTime = now
+        local pingSeconds = math.max((GetPingValue() or 0) / 1000, 0)
 
-local function GetHeightMultiplierForCharacter(TargetCharacter)
-    local succ, data = pcall(function()
-        local stateFolder = TargetCharacter and TargetCharacter:FindFirstChild("PlayerData")    
-        return stateFolder:GetAttribute("CurrentHeight")
-    end)
-    if succ then  
-        return data
-    else
-     --   print("failed to get height")
-        return 1
+        if CachedPingSeconds == 0 then
+            CachedPingSeconds = pingSeconds
+        else
+            CachedPingSeconds += (pingSeconds - CachedPingSeconds) * PingSmoothingAlpha
+        end
     end
 end
 
 local function ResetParryState()
     KeyHeld = false
     ReleaseDeadline = 0
+    TimeBetweenpressingFandParrying = nil
     BlockEnd()
-    InputRegisteredTime = nil
+end
+
+local function TransitionToState(newState)
+    if IsParryDebugEnabled() then
+        print(string.format("[Parry] %s -> %s", CurrentParryState, newState))
+    end
+    CurrentParryState = newState
+end
+
+-- ==========================================
+-- Helpers
+-- ==========================================
+
+local function ToggleDamageLogger(state)
+    if not state then
+        if connection then
+            connection:Disconnect()
+            connection = nil 
+        end
+        print("[Logger] Heartbeat damage logger DISABLED.")
+        return
+    end
+
+    if connection then return end 
+    print("[Logger] Heartbeat damage logger ACTIVE.")
+    
+    connection = RunService.Heartbeat:Connect(function()
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChild("Humanoid")
+        if not hum then return end 
+
+        if lastCharacter and (char.Address ~= lastCharacter.Address) then
+            lastCharacter = char
+            previousHealth = hum.Health
+        end
+        local currentHealth = hum.Health
+        if currentHealth < previousHealth then
+            local damageTaken = previousHealth - currentHealth
+            
+            if #TargetCharacters then
+                local activeAnimations = AnimationTracker:Update(TargetCharacter) or {}
+                
+                for _, anim in activeAnimations do
+                    if not anim.AnimationId or anim.TimePosition < 0.1 or anim.TimePosition > 0.7 then continue end 
+                    local assetId = tostring(anim.AnimationId)
+                    local poolData = GameConfig[assetId]
+                    warn(string.format(
+                        "[HIT] %d DMG | Anim: %s (%s) %s | Frame Time: %.3f", 
+                        damageTaken, 
+                        poolData and poolData.DisplayName or anim.Name or "Unknown",
+                        assetId, 
+                        poolData and poolData.Style or "",
+                        anim.TimePosition or 0
+                    ))
+                end
+            end
+        end
+        previousHealth = currentHealth
+    end)
+end
+
+-- ==========================================
+-- Parry Core Logic
+-- ==========================================
+
+local function GetHeightMultiplierForCharacter(TargetCharacter)
+    local succ, data = pcall(function()
+        local stateFolder = TargetCharacter and TargetCharacter:FindFirstChild("PlayerData")    
+        return stateFolder:GetAttribute("CurrentHeight")
+    end)
+    if succ and type(data) == "number" then
+        return data
+    end
+
+    return 1
 end
 
 function Dodge()
     BlockEnd()
 
-    task.spawn(function()
+    for i = 1, 12, 1 do  
         keypress(DodgeKey)
-        task.wait(0.035)
-        keyrelease(DodgeKey)
-    end)
+        keyrelease(DodgeKey) 
+    end
 end
 
-function BlockStart(startTime, holdFor)
-    local now = os_clock()
-    startTime = startTime or now
-
-    if not AutoParryToggle.Get() then
-        return false
+function BlockStart(StartTime, HoldFor)
+    if not StartTime then  
+        warn("Lacking a start time")
+        return
     end
 
-    if CurrentParryState ~= ParryState.IDLE then
-        return false
+    if ParryRegisteredTime then  
+       local TimeBetweenLastParry = os.clock() - ParryRegisteredTime
+         if TimeBetweenLastParry < 0.8 and IsParryDebugEnabled() then
+             print("parry is gonna be on cooldown")
+         end 
     end
 
-    if now - LastBlockInputAt < MIN_INPUT_INTERVAL then
-        return false
+    if CurrentParryState ~= ParryState.IDLE then  
+        if IsParryDebugEnabled() then
+            warn("tried to press in a non idle state bypass")
+        end
+        TransitionToState(ParryState.IDLE)
     end
 
-    if not OnInputF or not OnInputF(now) then
-        return false
-    end
+    local HoldFor = HoldFor or BlockHoldTime
+    ReleaseDeadline = math.max(StartTime, os.clock()) + HoldFor
 
-    LastBlockInputAt = now
-    ReleaseDeadline = math_max(now, startTime) + (holdFor or BlockHoldTime)
     KeyHeld = true
-
-    if ismouse1pressed and ismouse1pressed() and mouse2click then
-        mouse2click()
+    
+    if AutoParryToggle.Get() == true then
+        keypress(ParryKey)
+        ParryKeyPressed = true
     end
-
-    keypress(ParryKey)
-    return true
 end
 
 function BlockEnd()
     KeyHeld = false
-    keyrelease(ParryKey)
+    
+    if ParryKeyPressed then
+        keyrelease(ParryKey)
+        ParryKeyPressed = false
+    end
 end
-
 
 -- ==========================================
 -- STATE MACHINE
 -- ==========================================
 
-local function TransitionToState(newState)
-    print(string.format("[Parry] %s -> %s", CurrentParryState, newState))
-    CurrentParryState = newState
-end
-
---                  ==[Input State]==
--- Local F keypress
-OnInputF = function(inputTime)
-    if CurrentParryState ~= ParryState.IDLE then
-        return false
+local function OnInputF()
+    if CurrentParryState == ParryState.IDLE then
+        InputRegisteredTime = os.clock()
+        TransitionToState(ParryState.INPUT_PENDING)
     end
-
-    InputRegisteredTime = inputTime or os_clock()
-    TransitionToState(ParryState.INPUT_PENDING)
-    return true
 end
-
 
 local function DebugParry()
--- 1. Network Variables (These never rely on the parry window data, so we always calculate them)
     local WeActuallyBlockedAt = ParryRegisteredTime
     local WeWantedToBlockAt = InputRegisteredTime
     local TimeTheServerReceived = InputLatency / 2
 
     if LastPendingRegData then
-        -- 2. Animation Variables (Only extracted if the data actually exists)
         local AnimationStartTime = LastPendingRegData.StartTime
         local BlockStart = LastPendingRegData.BlockStart
         local BlockExpire = LastPendingRegData.BlockExpire
         
-        -- Relative Offsets (How far into the animation the window is)
-        local RelativeBlockStart = BlockStart - AnimationStartTime   -- e.g., 0.300s
-        local RelativeBlockExpire = BlockExpire - AnimationStartTime -- e.g., 0.650s
+        local RelativeBlockStart = BlockStart - AnimationStartTime   
+        local RelativeBlockExpire = BlockExpire - AnimationStartTime 
         
-        -- Timeline Calculations
-        local ClientReactionTime = WeWantedToBlockAt - AnimationStartTime -- Relative to Anim Start (0)
-        local ServerRelativeTime = (WeActuallyBlockedAt - TimeTheServerReceived) - AnimationStartTime -- Relative to Anim Start (0)
+        local ClientReactionTime = WeWantedToBlockAt - AnimationStartTime 
+        local ServerRelativeTime = (WeActuallyBlockedAt - TimeTheServerReceived) - AnimationStartTime 
         
         local IsSuccess = (ClientReactionTime >= RelativeBlockStart and ClientReactionTime <= RelativeBlockExpire)        
-        ----------------------------------------------------------------------
-        -- FULL DIAGNOSTICS LOG (Data Exists)
-        ----------------------------------------------------------------------
+
         print(string.format(
             "\n================ PARRY DIAGNOSTICS ================\n" ..
             "[NETWORK STATE]\n" ..
@@ -1129,9 +1358,6 @@ local function DebugParry()
             IsSuccess and "[SUCCESS]" or "[MISSED WINDOW]"
         ))
     else
-        ----------------------------------------------------------------------
-        -- LATENCY ONLY DIAGNOSTICS LOG (No Parry Data)
-        ----------------------------------------------------------------------
         print(string.format(
             "\n============ LATENCY ONLY DIAGNOSTICS ============\n" ..
             "[NETWORK STATE]\n" ..
@@ -1147,11 +1373,10 @@ local function DebugParry()
     end
 end
 
--- Parrying animation detected
 local function OnParryingAnimationSuccess()
-    if CurrentParryState == ParryState.INPUT_PENDING and InputRegisteredTime then
-        ParryRegisteredTime = os_clock()
-        InputLatency = ParryRegisteredTime - InputRegisteredTime
+    if CurrentParryState == ParryState.INPUT_PENDING then
+        ParryRegisteredTime = os.clock()
+        InputLatency = os.clock() - InputRegisteredTime
 
         if ParryDebugToggle:Get() then  
             DebugParry()
@@ -1161,125 +1386,105 @@ local function OnParryingAnimationSuccess()
     end
 end
 
--- Parrying window passed without parrying
 local function OnParryingAnimationFailed()
-    if CurrentParryState ~= ParryState.INPUT_PENDING then
-        return
+    if CurrentParryState == ParryState.INPUT_PENDING then
+        TransitionToState(ParryState.PARRYINGFAILED)
+        TransitionToState(ParryState.IDLE)
     end
-
-    TransitionToState(ParryState.PARRYINGFAILED)
-    ResetParryState()
-    TransitionToState(ParryState.IDLE)
 end
-
---                  ==[Parrying State]==
--- We parried but we didn't get a parry success in the time frame
 
 local StunToken = 0
 local function OnStunned()
-    Stunned = true
-
-    if CurrentParryState ~= ParryState.STUNNED then
+    if CurrentParryState ~= ParryState.STUNNED then 
         TransitionToState(ParryState.STUNNED)
     end
 
     StunToken += 1
-    local myToken = StunToken
-
-    scheduler.delay(0.3, function()
-        if myToken == StunToken then
-            Stunned = false
-            ResetParryState()
-            TransitionToState(ParryState.IDLE)
+    local MyToken = StunToken
+    
+    scheduler.delay(0.4, function()
+        if MyToken == StunToken then 
+            BlockEnd()
+            TransitionToState(ParryState.IDLE)            
         end
     end)
 end
 
-
 local function OnSuccessfulParry()
-    if CurrentParryState ~= ParryState.PARRYING or not LastPendingRegData then
-        return
-    end
-
-    local attackConfig = GameConfig[LastPendingRegData.AnimationId]
-    if not attackConfig or not InputRegisteredTime then
-        ResetParryState()
-        TransitionToState(ParryState.IDLE)
-        return
-    end
-
-    local parryPressTime = InputRegisteredTime - LastPendingRegData.StartTime
-    if parryPressTime < 0 or parryPressTime > 1 then
-        return
-    end
-
-    UI_Library:Notify(
-        "Parry Success",
-        string.format(
-            "%.3fs - %s %s",
-            parryPressTime,
-            attackConfig.Style or "Unknown",
-            attackConfig.DisplayName or "Unknown"
+    if CurrentParryState == ParryState.PARRYING then  
+        local AnimId = LastPendingRegData.AnimationId
+        local AttackConfig = GameConfig[AnimId]
+        local ParryPressTime = tonumber(InputRegisteredTime - LastPendingRegData.StartTime)
+        local EstimatedParryWindow = os.clock() - LastPendingRegData.StartTime
+        
+        if ParryPressTime > 1 or ParryPressTime < 0 then
+            return
+        end
+        
+        UI_Library:Notify(
+            "Parry Success", 
+            string.format("%.3fs PT: %.3fs - %s %s", 
+                ParryPressTime, 
+                EstimatedParryWindow,
+                AttackConfig.Style, 
+                AttackConfig.DisplayName
+            )
         )
-    )
+        
+        LastPendingRegData.LearnedParryTime = ParryPressTime
+        LastPendingRegData.Success = true
 
-    LastPendingRegData.LearnedParryTime = parryPressTime
-    LastPendingRegData.Success = true
-    LastPendingRegData.Processed = true
-
-    ResetParryState()
-    TransitionToState(ParryState.IDLE)
+        ResetParryState()
+        TransitionToState(ParryState.SUCCESS)
+        TransitionToState(ParryState.IDLE)
+    else
+        warn("Tried to evaluate outside of parrying")
+        print(CurrentParryState)
+    end
 end
 
 local function OnWindowExceeded()
-    if CurrentParryState ~= ParryState.PARRYING then
-        return
+    if CurrentParryState == ParryState.PARRYING then 
+        TransitionToState(ParryState.WINDOW_EXCEEDED)
+        TransitionToState(ParryState.IDLE)
     end
-
-    if LastPendingRegData then
-        LastPendingRegData.Success = false
-        LastPendingRegData.Processed = true
-    end
-
-    TransitionToState(ParryState.WINDOW_EXCEEDED)
-    ResetParryState()
-    TransitionToState(ParryState.IDLE)
 end
 
-local function ParryTask()
-    local now = os_clock()
+local function ParryTask(localAnimations)
+    local now = os.clock()
 
-    if KeyHeld and now >= ReleaseDeadline then
+    if KeyHeld and now > ReleaseDeadline then
         BlockEnd()
     end
 
     if CurrentParryState == ParryState.INPUT_PENDING then
-        local maxLatency = 0.5
-        local timeSinceInput = InputRegisteredTime and (now - InputRegisteredTime) or math.huge
-        local activeAnims = GetActiveAnimationsForCharacterAsDictionary(
-            LocalPlayer.Character,
-            LocalTracker
-        )
+        local MaxLatency = 0.5 
+        local TimePassedSinceFWasPressed = now - InputRegisteredTime
 
-        if activeAnims[ParryingAnimation[1]] then
-            OnParryingAnimationSuccess()
-        elseif timeSinceInput > maxLatency then
-            warn(string.format(
-                "Parrying animation did not appear (max %.2fs, waited %.2fs)",
-                maxLatency,
-                timeSinceInput
-            ))
-            OnParryingAnimationFailed()
+        for _, v in localAnimations do
+            if ParryingAnimationLookup[v.AnimationId] then
+                OnParryingAnimationSuccess()
+                break
+            end
         end
 
-    elseif CurrentParryState == ParryState.PARRYING then
-        if not LastPendingRegData then
+        if not iskeypressed(ParryKey) then  
+            warn("F key was released before parrying animation appeared")
             ResetParryState()
             TransitionToState(ParryState.IDLE)
-            return
         end
 
-        if now > LastPendingRegData.BlockExpire then
+        if TimePassedSinceFWasPressed > MaxLatency then
+            warn(string.format("Parrying animation didn't appear, probably on CD MAX: %.2f | TIME: %.2f", MaxLatency, TimePassedSinceFWasPressed))
+            OnParryingAnimationFailed()
+            TransitionToState(ParryState.IDLE)
+        end
+    
+    elseif CurrentParryState == ParryState.PARRYING then
+        local ParryWindowStart = ParryRegisteredTime
+        local ParryWindowEnd = ParryRegisteredTime + ParryWindow + 0.3
+
+        if now > ParryWindowEnd then
             OnWindowExceeded()
         end
     end
@@ -1287,35 +1492,32 @@ end
 
 -- ==========================================
 
-
-local ParryLearningLog = {}  -- {[animId] = {TriggerTime, Style, DisplayName, Count}}
+local ParryLearningLog = {}
 
 local function onLocalAnimationAdded(anim)
     local animId = anim.AnimationId
 
-    if table_find(ParriedAnimation, animId) then  
+    if ParriedAnimationLookup[animId] then
         OnSuccessfulParry()
     end
 
-    if table_find(ParryingAnimation, animId) then
+    if ParryingAnimationLookup[animId] then
         if not InputRegisteredTime then return end 
-
-        -- For someone reason it was running before UIS??
-       --scheduler.delay(0.01, function()
-          --  if InputRegisteredTime then
-                --EvaluateParrySuccess()
-                OnParryingAnimationSuccess()
-          --  end
-       -- end)
+        OnParryingAnimationSuccess()
     end
     
-    if table_find(StunnedAnimation, animId) then
-        -- keypress(string.byte()) if u f in a stun u get a shaky block 
-       OnStunned()
+    if StunnedAnimationLookup[animId] then
+    end
+
+    if GameConfig[animId] then  
+        if IsParryDebugEnabled() then
+            print("player is m1ing")
+        end
+        OnStunned()
     end
 end
 
-local AnimationAdded = TrackConnection(LocalTracker.AnimationAdded:Connect(onLocalAnimationAdded))
+local AnimationAdded = LocalTracker.AnimationAdded:Connect(onLocalAnimationAdded)
 
 local function LogAnimation(assetId, trackInfo)
     if not AnimationsLoggedCache[assetId] then
@@ -1325,22 +1527,17 @@ local function LogAnimation(assetId, trackInfo)
     end
 end
 
-function GetActiveAnimationsForCharacterAsDictionary(character, tracker)
-    local returnTable = {}
-    if not character then
-        return returnTable
-    end
-
-    tracker = tracker or AnimationTracker
-    local activeAnimations = tracker:Update(character) or {}
-
-    for _, anim in ipairs(activeAnimations) do
-        if anim.AnimationId then
-            returnTable[anim.AnimationId] = anim
+function GetActiveAnimationsForCharacterAsDictionary(character)
+    local ReturnTable = {}
+    local activeAnimations = AnimationTracker:Update(character)
+    if not activeAnimations or #activeAnimations == 0 then return {} end
+    for Index, Anim in activeAnimations do  
+        if Anim.AnimationId then  
+            ReturnTable[Anim.AnimationId] = Anim
         end
     end
 
-    return returnTable
+    return ReturnTable
 end
 
 -- ==========================================
@@ -1366,44 +1563,32 @@ local function CheckCharacterDistance(localRoot, targetRoot)
     return (targetRoot.Position - localRoot.Position).Magnitude
 end
 
-
 local function UpdateCharacterESP(character, Distance)
-    -- Preserve the original targeting/range checks.
-    if not AutoParryToggle.Get() then
-        if SHOW_TARGET_ESP then
-            local tracker = EspTrackers[character]
-            if tracker and tracker.ChangeText then
-                tracker:ChangeText("Name", "AUTO PARRY IS DISARMED", COLOR_RED)
-            end
-        end
+    if not AutoParryToggle.Get() then 
+        return true
+    elseif Distance > AutoParryRange then
+        return false
+    else
         return true
     end
-
-    if Distance > AutoParryRange then
-        if SHOW_TARGET_ESP then
-            local tracker = EspTrackers[character]
-            if tracker and tracker.ChangeText then
-                tracker:ChangeText("Name", character.Name .. " | OUT OF RANGE", COLOR_RED)
-            end
-        end
-        return false
-    end
-
-    if SHOW_TARGET_ESP then
-        local tracker = EspTrackers[character]
-        if tracker and tracker.ChangeText then
-            tracker:ChangeText("Name", character.Name .. " IN RANGE", COLOR_GREEN)
-        end
-    end
-
-    return true
 end
 
-local function CalculateParryTiming(attackConfig, StartTime)
-    
+local function CalculateParryTiming(attackConfig, StartTime, Target)
     local optimalReactionTime = (attackConfig.ReactionTime or DefaultReactionTime)
-    local adjustedReactionTime = optimalReactionTime + ParryOffset -- - pingDelay
-    
+    local HeightMultiplier = 1 
+    if HeightToggle.Get() then  
+       HeightMultiplier = GetHeightMultiplierForCharacter(Target)
+    end
+
+    local CompValue = CachedPingSeconds * 0.5
+
+    if PingCompensateToggle.Get() then  
+        optimalReactionTime -= CompValue
+    end
+
+    local adjustedReactionTime = (optimalReactionTime * HeightMultiplier) + ParryOffset - FrameLeadCompensation
+    adjustedReactionTime = math.max(adjustedReactionTime, 0)
+
     local parryWindowStart = adjustedReactionTime
     local parryWindowEnd = adjustedReactionTime + ParryWindow
 
@@ -1413,17 +1598,19 @@ local function CalculateParryTiming(attackConfig, StartTime)
     return ClockStart, ClockEnd
 end
 
-local function UpdateAnimationRegistry(animKey, anim, now, currentTrackTime, attackConfig)
+local EXECUTE_DEBOUNCE = 0.5
+
+local function UpdateAnimationRegistry(animKey, anim, now, currentTrackTime, attackConfig, TargetCharacter)
 
     if not AnimationRegistry[animKey] then
-        local adjustedNow = now - currentTrackTime
-        local BlockStart, BlockExpire = CalculateParryTiming(attackConfig, adjustedNow)
+        local observedTrackTime = math.max(tonumber(currentTrackTime) or 0, 0)
+        local animationStartTime = now - observedTrackTime
+        local BlockStart, BlockExpire = CalculateParryTiming(attackConfig, animationStartTime, TargetCharacter)
 
         AnimationRegistry[animKey] = {
-            StartTime = adjustedNow,
+            StartTime = animationStartTime,
             Processed = false,
-            Attempted = false,
-            CurrentClockTime = os_clock(),
+            CurrentClockTime = os.clock(),
             CurrentTrackTime = currentTrackTime,
             ReactionTime = attackConfig,
             Ignore = false,
@@ -1432,24 +1619,26 @@ local function UpdateAnimationRegistry(animKey, anim, now, currentTrackTime, att
             BlockStart = BlockStart,
             BlockExpire = BlockExpire,
             RandomNum = math.random(1, 100),
+            LastExecuteTime = 0,
         }
     end
     
     local regData = AnimationRegistry[animKey]
     
     if regData.CurrentTrackTime and (currentTrackTime < regData.CurrentTrackTime) then
-        local BlockStart, BlockExpire = CalculateParryTiming(attackConfig, now - currentTrackTime)
+        local BlockStart, BlockExpire = CalculateParryTiming(attackConfig, now - currentTrackTime, TargetCharacter)
         
         regData.Processed = false
-        regData.Attempted = false
         regData.DidALoop = true
-        warn("Loop detected")
+        if IsParryDebugEnabled() then
+            warn("Loop detected")
+        end
         regData.BlockStart = BlockStart
         regData.BlockExpire = BlockExpire
-        regData.StartTime = now - currentTrackTime
+        regData.StartTime = now - math.max(tonumber(currentTrackTime) or 0, 0)
     end
     
-    regData.CurrentClockTime = os_clock()
+    regData.CurrentClockTime = os.clock()
     regData.CurrentTrackTime = currentTrackTime
 
     if LastPendingRegData == regData then
@@ -1463,68 +1652,62 @@ local function CheckAnimationDirection(character, localCharacter, localRoot, tar
     if character.Address == localCharacter.Address then return true end
     
     local direction = (targetRoot.Position - localRoot.Position).Unit
+    local distance = (targetRoot.Position - localRoot.Position).Magnitude
     local isHeavy = attackConfig.DisplayName == "M2" or attackConfig.DisplayName == "Heavy" or attackConfig.Heavy
     
-    if not isHeavy then  
-        if TargetFacingYou.Get() and targetRoot.CFrame.LookVector:Dot(-direction) < 0.25 then return false end
-        if YouFacingTarget.Get() and localRoot.CFrame.LookVector:Dot(direction) < 0.25 then return false end
+    if not isHeavy then 
+        if TargetFacingYou.Get() and targetRoot.CFrame.LookVector:Dot(-direction) < 0.1 then return false end
+        if YouFacingTarget.Get() and localRoot.CFrame.LookVector:Dot(direction) < 0.1 then return false end
     end
     
     return true
 end
 
 local function ExecuteParry(regData, attackConfig)
-    if regData.Processed or regData.Attempted then
+    local now = os.clock()
+    if (now - regData.LastExecuteTime) < EXECUTE_DEBOUNCE then
         return
     end
+    regData.LastExecuteTime = now
 
-    local now = os_clock()
-    local isHeavy = attackConfig.DisplayName == "M2"
-        or attackConfig.DisplayName == "Heavy"
-        or attackConfig.Heavy
+    local isHeavy = attackConfig.DisplayName == "M2" or attackConfig.DisplayName == "Heavy" or attackConfig.Heavy
 
-    if attackConfig.Jump then
-        if now < DodgeLockoutEnd then
-            return
-        end
-
-        regData.Attempted = true
-        regData.Processed = true
-        DodgeLockoutEnd = now + 0.25
-
+    if attackConfig.Jump then 
         task.spawn(function()
             keypress(32)
-            task.wait(0.06)
-            keyrelease(32)
+            task.wait(.06)
+            keyrelease(32)                      
         end)
-        return
-    end
-
-    if isHeavy and AutoDodgeToggle.Get() then
-        if now < DodgeLockoutEnd then
-            return
+        DodgeLockoutEnd = os.clock() + 0.2
+    elseif isHeavy and AutoDodgeToggle.Get() then
+        if AutoParryToggle.Get() then  
+            Dodge()            
         end
-
-        regData.Attempted = true
-        regData.Processed = true
-        DodgeLockoutEnd = now + 0.25
-        Dodge()
-        return
-    end
-
-    regData.Attempted = true
-    LastPendingRegData = regData
-
-    if not BlockStart(regData.BlockStart) then
-        regData.Attempted = false
-        if LastPendingRegData == regData then
-            LastPendingRegData = nil
+    else 
+        if LastPendingRegData ~= regData then
+            LastPendingRegData = regData
+            BlockStart(LastPendingRegData.BlockStart)
+            if IsParryDebugEnabled() then
+                print(string.format("Block triggered by [%s | %s] " ,
+                    attackConfig.Style,
+                    attackConfig.DisplayName
+                    ))
+            end
+        elseif LastPendingRegData == regData then
+            if regData.DidALoop then  
+                if IsParryDebugEnabled() then
+                    print(string.format("Block retriggered for [%s | %s] because its the same key but it looped",
+                    attackConfig.Style,
+                    attackConfig.DisplayName))
+                end
+                regData.DidALoop = false
+                BlockStart(regData.BlockStart)
+            end
         end
     end
 end
 
 local function EvaluateAnimation(anim, character, localCharacter, localRoot, targetRoot, currentActiveIds)
-    -- ANIMATION VALIDATION
     if not anim.AnimationId then return end
     local attackConfig = GameConfig[tostring(anim.AnimationId)]
     if not attackConfig then return end
@@ -1532,73 +1715,74 @@ local function EvaluateAnimation(anim, character, localCharacter, localRoot, tar
     local animKey = anim.Address or anim
     currentActiveIds[animKey] = true
     
-    -- ANIMATION REGISTRY & STATE
-    local now = os_clock()
-    local regData = UpdateAnimationRegistry(animKey, anim, now, anim.TimePosition or 0, attackConfig)
+    local now = os.clock()
+    local regData = UpdateAnimationRegistry(animKey, anim, now, anim.TimePosition or 0, attackConfig, character)
     if regData.Processed then return end
-    
-    -- PARRY FUNCTION OVERRIDE
+
     if attackConfig.ParryFunction and (now - regData.StartTime) <= (attackConfig.ReactionTime or DefaultReactionTime) + ParryWindow/2 then
-        attackConfig.ParryFunction({
-            RegistryData = regData,
-            Mob = character,
-            AnimationData = anim,
-            AnimationTracker = AnimationTracker,
-        })
+        if AutoParryToggle.Get() then  
+           attackConfig.ParryFunction({
+               RegistryData = regData,
+               Mob = character,
+               AnimationData = anim,
+               AnimationTracker = AnimationTracker,
+           }) 
+        end
         return
     end
     
-    -- DIRECTION CHECKS
     if not CheckAnimationDirection(character, localCharacter, localRoot, targetRoot, attackConfig) then return end
     
     if regData.RandomNum > ProbabilityToParry then
         regData.Processed = true
---        print("Skip b/c PTP", RandomNum, ProbabilityToParry)
         return
     end
     
-    -- PARRY EXECUTION
-    if now >= regData.BlockStart and now <= regData.BlockExpire then
-    --    if not LastPendingRegData or LastPendingRegData.Proc then
-            ExecuteParry(regData, attackConfig)
-    --    end
+    local BlockExpireTimer = regData.BlockExpire - now
+    
+    if now >= regData.BlockStart and BlockExpireTimer >= 0 then
+        if regData.BlockExpire < BestParryExpire then
+            BestParryRegData = regData
+            BestParryAttackConfig = attackConfig
+            BestParryExpire = regData.BlockExpire
+        end
     end
 end
 
 local function EvaluateCharacter(character, localCharacter, localRoot, currentActiveIds)
-    -- CHARACTER VALIDATION
     local targetRoot = ValidateTargetCharacter(character)
     if not targetRoot then return end
-    
-    -- CHARACTER DISTANCE & ESP
-    local Distance = CheckCharacterDistance(localRoot, targetRoot)
-    if not UpdateCharacterESP(character, Distance) then return end
-    
-    -- ANIMATION LOOP
+
     local activeAnimations = AnimationTracker:Update(character)
+    ActiveAnimationsThisFrame[character] = activeAnimations or EmptyAnimations
     if not activeAnimations or #activeAnimations == 0 then return end
+
+    local positionDelta = targetRoot.Position - localRoot.Position
+    if positionDelta:Dot(positionDelta) > AutoParryRange * AutoParryRange then return end
     
     for _, anim in ipairs(activeAnimations) do
         EvaluateAnimation(anim, character, localCharacter, localRoot, targetRoot, currentActiveIds)
     end
 end
 
-local ReusableActiveIds = {}
-
 local function EvaluateParryTriggers()
-    -- SETUP & VALIDATION
     local localCharacter, localRoot = ValidateLocalCharacter()
     if not localCharacter or not localRoot then return end
     
-    table.clear(ReusableActiveIds)
-    local currentActiveIds = ReusableActiveIds
+    table.clear(CurrentActiveAnimationIds)
+    local currentActiveIds = CurrentActiveAnimationIds
+    BestParryRegData = nil
+    BestParryAttackConfig = nil
+    BestParryExpire = math.huge
 
-    -- CHARACTER ITERATION
     for _, character in ipairs(TargetCharacters) do
         EvaluateCharacter(character, localCharacter, localRoot, currentActiveIds)
     end
 
-    -- CLEANUP
+    if BestParryRegData then
+        ExecuteParry(BestParryRegData, BestParryAttackConfig)
+    end
+
     for key, val in pairs(AnimationRegistry) do
         if not currentActiveIds[key] then
             AnimationRegistry[key] = nil
@@ -1610,66 +1794,35 @@ local function EvaluateParryTriggers()
 end
 
 -- ==========================================
+-- Process Logging
 -- ==========================================
-
 
 local function ProcessEspAndLogging()
     for i = #TargetCharacters, 1, -1 do
         local character = TargetCharacters[i]
 
-        if not character or not character.Parent then
-            EspTrackers[character] = nil
-            table.remove(TargetCharacters, i)
-            continue
+        local activeAnimations = ActiveAnimationsThisFrame[character]
+        if not activeAnimations then
+            activeAnimations = AnimationTracker:Update(character) or EmptyAnimations
+            ActiveAnimationsThisFrame[character] = activeAnimations
         end
+        if #activeAnimations == 0 then continue end 
 
-        -- Keep scanning animations and logging unknown IDs in the background.
-        local activeAnimations = AnimationTracker:Update(character) or {}
-        local tracker = EspTrackers[character]
-        local lines = SHOW_TARGET_ESP and {} or nil
-
-        for _, anim in ipairs(activeAnimations) do
-            if not anim.AnimationId then
-                continue
-            end
-
+        for i = 1, #activeAnimations do
+            local anim = activeAnimations[i]
+            if not anim.AnimationId then continue end        
+            
             local assetId = anim.AnimationId
             local numericId = tonumber(string.match(tostring(assetId), "%d+"))
-
-            if numericId and table_find(IgnoreIds, numericId) then
-                continue
-            end
-
+            
+            if numericId and IgnoreIdLookup[numericId] then continue end
+            
             local poolData = GameConfig[tostring(assetId)]
             local resolvedName = poolData and poolData.DisplayName or anim.Name
-
-            if not poolData then
-                LogAnimation(assetId, {
-                    Name = resolvedName,
-                    AnimationId = assetId,
-                })
+            
+            if not poolData then  
+                LogAnimation(assetId, { Name = resolvedName, AnimationId = assetId })
             end
-
-            if SHOW_TARGET_ESP then
-                table.insert(lines, string.format(
-                    "%s (%s) | ID: %s | Time: %.2f | Timing: %.2f %s | Speed: %.2f",
-                    tostring(resolvedName),
-                    poolData and poolData.Style or "???",
-                    tostring(assetId),
-                    anim.TimePosition or 0.00,
-                    poolData and poolData.ReactionTime or DefaultReactionTime,
-                    poolData and "[Logged]" or "[Unknown]",
-                    anim.Speed or 1
-                ))
-            end
-        end
-
-        if SHOW_TARGET_ESP and tracker and tracker.ChangeText then
-            tracker:ChangeText(
-                "CurrentlyPlaying",
-                #lines > 0 and table.concat(lines, "\n") or "None",
-                COLOR_WHITE
-            )
         end
     end
 end
@@ -1680,36 +1833,40 @@ local function ClearAllEspTrackers()
             if ESP_Utility.TrackersToUpdate[tracker] then
                 ESP_Utility.TrackersToUpdate[tracker] = nil
             end
-
-            -- 2. Destroy the tracker object
             tracker:Destroy()
         end
     end
-    table.clear(EspTrackers) -- Safer than re-assigning {} to preserve table memory references
+    table.clear(EspTrackers)
 end
 
-
 local function UpdateTargetCharacters(charactersList)
-    -- Preserve target selection/cycle behavior; only disable visual trackers.
+    if #TargetCharacters == #charactersList then
+        local unchanged = true
+
+        for i = 1, #charactersList do
+            local currentTarget = TargetCharacters[i]
+            local nextTarget = charactersList[i]
+            local sameTarget = currentTarget == nextTarget
+
+            if not sameTarget and currentTarget and nextTarget then
+                sameTarget = currentTarget.Address == nextTarget.Address
+            end
+
+            if not sameTarget then
+                unchanged = false
+                break
+            end
+        end
+
+        if unchanged then return end
+    end
+
     ClearAllEspTrackers()
     table.clear(TargetCharacters)
 
-    for _, character in ipairs(charactersList) do
+    for _, character in charactersList do
         table.insert(TargetCharacters, character)
-
-        if SHOW_TARGET_ESP and character and character:FindFirstChild("HumanoidRootPart") then
-            local tracker = ESP_Utility.NewTracker(
-                character.HumanoidRootPart,
-                character.Name,
-                COLOR_RED
-            )
-
-            if tracker and tracker.Name then
-                tracker:AddText("CurrentlyPlaying", nil, "???")
-            end
-
-            EspTrackers[character] = tracker
-        end
+        -- ESP visual overlay disabled
     end
 end
 
@@ -1728,9 +1885,6 @@ function CycleEvent()
     local validCharacters = {}
 
     for _, char in ipairs(allCharacters) do
-        -- Prevent the script from targeting yourself
-        if char == localCharacter then continue end 
-
         local targetRoot = char:FindFirstChild("HumanoidRootPart")
         if targetRoot then
             local distance = (localRoot.Position - targetRoot.Position).Magnitude
@@ -1753,7 +1907,7 @@ function CycleEvent()
         return a.Distance < b.Distance
     end)
 
-    if MuliTarget.Get() then
+    if MultiTarget.Get() then
         local Max = 3
         local finalTargets = {}
         
@@ -1775,89 +1929,53 @@ end
 -- ==========================================
 -- Input & Loop
 -- ==========================================
-TrackConnection(UIS.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then
-        return
-    end
+UIS.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    local RhythmServiceUI = game.Players.LocalPlayer.PlayerGui:FindFirstChild("RhythmServiceUI")
+    if RhythmServiceUI then return end
 
-    if input.KeyCode == CycleKeybind then
+    if input.KeyCode == string.byte("x") then
         CycleEvent()
-        return
+    elseif input.KeyCode == string.byte("f") then 
+        local localChar = LocalPlayer.Character
+        LocalTracker:Update(localChar) 
+        OnInputF()
     end
-
-    if input.KeyCode == Enum.KeyCode.F then
-        local localCharacter = LocalPlayer.Character
-        if localCharacter then
-            LocalTracker:Update(localCharacter)
-            OnInputF(os_clock())
-        end
-    end
-end))
-
+end)
 
 local STATE_MACHINE_TICK = 0.05
-local UTILITY_TICK = 0.5 -- Run 2 times per second
-local LastCycleCheck = 0 
+local TARGET_REFRESH_TICK = 0.2
+local LOGGING_TICK = 0.5
+local LastTargetRefresh = 0
+local LastLoggingCheck = 0
 
-local function MainLoop()
-    local localCharacter = LocalPlayer.Character
-    local humanoid = localCharacter and localCharacter:FindFirstChildOfClass("Humanoid")
-    if not localCharacter or not humanoid or humanoid.Health <= 0 then
-        return
-    end
+local function MainLoop(deltaTime)
+    local now = os.clock()
+    local localChar = LocalPlayer.Character
+    if not localChar or not localChar:FindFirstChild("Humanoid") then return end
 
-    LocalTracker:Update(localCharacter)
-    
-    if AutoParryToggle.Get() then
-        EvaluateParryTriggers()
-        ParryTask()
-    end
+    UpdateTimingCache(now, deltaTime)
+    table.clear(ActiveAnimationsThisFrame)
+
+    local localAnimations = LocalTracker:Update(localChar) or EmptyAnimations
+    EvaluateParryTriggers()
+    ParryTask(localAnimations)
+    AutoPlayTask()
     
     scheduler.update()
 
-    local now = os_clock()
-    if now - LastCycleCheck >= UTILITY_TICK then
-        LastCycleCheck = now
+    if AutoTargetNearest.Get() and now - LastTargetRefresh >= TARGET_REFRESH_TICK then
+        LastTargetRefresh = now
+        CycleEvent()
+    end
 
-        if AutoTargetNearest.Get() then
-            CycleEvent()
-        end
-
+    if now - LastLoggingCheck >= LOGGING_TICK then
+        LastLoggingCheck = now
         ProcessEspAndLogging()
     end
 end
 
-if game.PlaceId == 8668476218 or game.PlaceId == 134572803901609 then
-    ListenForOrbs()
-end
-
-local lastLoopErrorAt = 0
-TrackConnection(RunService.RenderStepped:Connect(function()
-    local ok, loopError = xpcall(MainLoop, Traceback)
-    if not ok and os_clock() - lastLoopErrorAt >= 1 then
-        lastLoopErrorAt = os_clock()
-        warn("[AutoParry MainLoop] " .. tostring(loopError))
-    end
-end))
-
-Environment.__GAKURAN_AUTO_PARRY_CLEANUP = function()
-    for _, runtimeConnection in ipairs(RuntimeConnections) do
-        pcall(function()
-            runtimeConnection:Disconnect()
-        end)
-    end
-    table.clear(RuntimeConnections)
-
-    if connection then
-        pcall(function()
-            connection:Disconnect()
-        end)
-        connection = nil
-    end
-
-    pcall(BlockEnd)
-    pcall(ClearAllEspTrackers)
-    table.clear(pendingTasks)
-end
-
-print("[AutoParry] Optimized core loaded successfully")
+-- Heartbeat observes the current animation step; RenderStepped can see the
+-- previous animation state and add up to one frame of reaction delay.
+RunService.Heartbeat:Connect(MainLoop)
